@@ -53,3 +53,36 @@ images:
       latest: testing
     to_stable:
       testing: latest
+
+# Drivers table:
+# Overrides the graphics-driver variant table in the same file. The privileged
+# helper resolves driver switches through this table just as it resolves channel
+# switches. A second file would be a second chance for the GUI and helper to disagree.
+#
+# Keys in `drivers:` must be the base image path (full registry path, without a tag
+# or a driver variant suffix like -nvidia).
+#
+# Supported driver flavours:
+#   standard: base image with open-source drivers (AMD/Intel) - REQUIRED
+#   nvidia: proprietary NVIDIA driver (switches to <base>-nvidia:<tag>)
+#   nvidia-open: NVIDIA open kernel modules (switches to <base>-nvidia-open:<tag>)
+#
+# The `standard` driver entry is mandatory and must declare a non-empty stream
+# list, so a host on a driver image can always switch back to the base image.
+# Each flavour lists the published streams/tags. A driver switch is only
+# offered when the running stream appears in that flavour's stream list.
+
+drivers:
+  # TunaOS desktop image with standard and NVIDIA driver variants.
+  ghcr.io/tuna-os/tromso:
+    standard:
+      - latest
+      - stable
+    nvidia:
+      - latest
+
+  ghcr.io/tuna-os/razorfin:
+    standard:
+      - latest
+    nvidia:
+      - latest

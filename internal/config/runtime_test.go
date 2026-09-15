@@ -264,31 +264,62 @@ func TestWindowConfigFailureWiringIsPersistent(t *testing.T) {
 }
 
 func TestConfigurationGuideExamplePassesStrictValidation(t *testing.T) {
-	guidePath := filepath.Join(repoRoot(), "CONFIG.md")
-	guide, err := os.ReadFile(guidePath)
-	if err != nil {
-		t.Fatalf("read %s: %v", guidePath, err)
+	tests := []struct {
+		relPath string
+		heading string
+	}{
+		{"CONFIG.md", "## Example: Disabling Homebrew Features"},
+		{filepath.Join("docs", "reference.md"), "## Example"},
 	}
 
-	const heading = "## Example: Disabling Homebrew Features"
-	afterHeading := string(guide)
-	headingIndex := strings.Index(afterHeading, heading)
-	if headingIndex < 0 {
-		t.Fatalf("%s does not contain %q", guidePath, heading)
-	}
-	afterHeading = afterHeading[headingIndex+len(heading):]
-	fenceStart := strings.Index(afterHeading, "```yaml")
-	if fenceStart < 0 {
-		t.Fatalf("%s example has no YAML fence", heading)
-	}
-	afterFence := afterHeading[fenceStart+len("```yaml"):]
-	fenceEnd := strings.Index(afterFence, "```")
-	if fenceEnd < 0 {
-		t.Fatalf("%s example has no closing fence", heading)
-	}
+	for _, tc := range tests {
+		t.Run(tc.relPath, func(t *testing.T) {
+			path := filepath.Join(repoRoot(), tc.relPath)
+			guide, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
 
-	example := []byte(afterFence[:fenceEnd])
-	if _, loadErr := parseAndValidate(guidePath, example); loadErr != nil {
-		t.Fatalf("%s documented YAML is rejected by the runtime validator: %v", heading, loadErr)
+			afterHeading := string(guide)
+			headingIndex := strings.Index(afterHeading, tc.heading)
+			if headingIndex < 0 {
+				t.Fatalf("%s does not contain %q", path, tc.heading)
+			}
+			afterHeading = afterHeading[headingIndex+len(tc.heading):]
+			fenceStart := strings.Index(afterHeading, "```yaml")
+			if fenceStart < 0 {
+				t.Fatalf("%s example has no YAML fence", tc.heading)
+			}
+			afterFence := afterHeading[fenceStart+len("```yaml"):]
+			fenceEnd := strings.Index(afterFence, "```")
+			if fenceEnd < 0 {
+				t.Fatalf("%s example has no closing fence", tc.heading)
+			}
+
+			example := afterFence[:fenceEnd]
+			tmpPath := writeConfigFile(t, example)
+			merged, loadErr := loadFromPath(tmpPath)
+			if loadErr != nil {
+				t.Fatalf("%s documented YAML is rejected by the runtime validator: %v", tc.heading, loadErr)
+			}
+
+			for _, check := range []struct {
+				page  string
+				group string
+			}{
+				{"updates_page", "update_all_group"},
+				{"updates_page", "brew_updates_group"},
+				{"updates_page", "brew_trust_group"},
+				{"applications_page", "brew_group"},
+				{"applications_page", "brew_search_group"},
+				{"applications_page", "brew_bundles_group"},
+				{"maintenance_page", "maintenance_brew_group"},
+				{"features_page", "troubleshooting_group"},
+			} {
+				if merged.IsGroupEnabled(check.page, check.group) {
+					t.Errorf("%s example leaves %s.%s enabled", tc.relPath, check.page, check.group)
+				}
+			}
+		})
 	}
 }

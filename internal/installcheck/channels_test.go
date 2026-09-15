@@ -180,3 +180,19 @@ func TestDescriptorOverrideStaysBehindTheE2EBuildTag(t *testing.T) {
 		t.Error(".goreleaser.yaml builds with the chairlift_e2e tag; released binaries must not honor the override")
 	}
 }
+
+// The example channel table must document the driver table format and
+// provide working examples for both standard and vendor-specific drivers.
+func TestExampleChannelTableDocumentsDrivers(t *testing.T) {
+	content := readRepoFile(t, "channels.example.yml")
+	for _, required := range []string{
+		"drivers:",
+		"standard:",
+		"nvidia:",
+		"nvidia-open:",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("channels.example.yml does not document driver format (%q)", required)
+		}
+	}
+}

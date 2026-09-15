@@ -142,7 +142,7 @@ Per-wrapper mechanics:
 
 ### Configuration-driven UI visibility
 
-Each preference group on every page checks `config.IsGroupEnabled(pageName, groupName)` before building its widgets. Groups default to enabled if not specified in config. The `maintenance_cleanup_group` defaults to disabled in the default config.
+Each preference group on every page checks `config.IsGroupEnabled(pageName, groupName)` before building its widgets. Groups default to enabled if not specified in config. Both `maintenance_cleanup_group` and `reset_group` default to disabled in the default config.
 
 `internal/config/config.go` builds the effective `*Config` by overlaying a
 parsed file onto `defaultConfig()` field by field, not by replacing it
@@ -1378,9 +1378,12 @@ this same table, so a user-writable table would let a local user redirect an
 authenticated system switch. Both the GUI and the helper call
 `imageinfo.LoadSystemTable()` at startup so the two always agree. A file that
 fails validation is rejected whole — a half-applied mapping is exactly the
-situation that produces a wrong switch target. `channels.example.yml`
-documents the format and is installed to `/usr/share/doc/chairlift/`; no live
-table is ever packaged.
+situation that produces a wrong switch target. The file configures release
+channels under `images:` and graphics-driver variants under `drivers:`. Driver
+entries map a base image registry path to supported driver flavours
+(`standard` required, `nvidia`, `nvidia-open`) and their published streams.
+`channels.example.yml` documents both formats and is installed to
+`/usr/share/doc/chairlift/`; no live table is ever packaged.
 
 Separately, `polkitd` reads application policies from the fixed directory
 `/usr/share/polkit-1/actions` — not `$XDG_DATA_DIRS`, not any
@@ -1482,7 +1485,7 @@ Only a missing candidate advances the search. The first existing candidate is
 authoritative; a read, parse, type, or schema error disables every feature
 group and produces both a high-signal log entry and a persistent toast. If no
 file is found, all features default to enabled except
-`maintenance_cleanup_group`, which defaults to disabled. See
+`maintenance_cleanup_group` and `reset_group`, which default to disabled. See
 [CONFIG.md](../../CONFIG.md) for the full reference.
 
 Both packaging paths own only the `/usr/share` candidate and may replace it on
@@ -1506,6 +1509,9 @@ page_name:
     website: "..." # Help page URLs
     issues: "..."
     chat: "..."
+    ai_images: # Container images per GPU vendor
+      nvidia: "..."
+    ai_model: "..." # Language model to serve
 ```
 
 ### Key config groups
@@ -1514,7 +1520,9 @@ page_name:
 | ------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `system_page`       | `system_info_group`              | OS info from `/etc/os-release`                                                                                                                                                                          |
 | `system_page`       | `bootc_status_group`             | bootc deployment status display (gated on `bootc.IsBootcBootedCached()`)                                                                                                                                |
+| `system_page`       | `channel_group`                  | Release channel and graphics-driver switching (gated on `/usr/share/ublue-os/image-info.json`)                                                                                                          |
 | `system_page`       | `health_group`                   | System monitor launcher (configurable `app_id`, default: Mission Center)                                                                                                                                |
+| `updates_page`      | `update_all_group`               | Multi-phase update sequencing (OS image, Flatpaks, Homebrew) and automatic background updates switch                                                                                                    |
 | `updates_page`      | `bootc_updates_group`            | bootc system updates — stage via `bootc-update-stage`, apply on restart (gated on `bootc.IsBootcBootedCached()` and stage script availability)                                                          |
 | `updates_page`      | `sysupdate_updates_group`        | native A/B system updates — stage via `snosi-sysupdate-stage`, apply on restart, with a read-only previous-version rollback row (gated on `sysupdate.IsNativeABCached()` and stage script availability) |
 | `updates_page`      | `flatpak_updates_group`          | Flatpak pending updates                                                                                                                                                                                 |
@@ -1530,7 +1538,12 @@ page_name:
 | `maintenance_page`  | `maintenance_brew_group`         | Homebrew cleanup (deferred visibility)                                                                                                                                                                  |
 | `maintenance_page`  | `maintenance_flatpak_group`      | Flatpak unused cleanup (deferred visibility)                                                                                                                                                            |
 | `maintenance_page`  | `maintenance_optimization_group` | System optimization (placeholder)                                                                                                                                                                       |
+| `maintenance_page`  | `reset_group`                    | Powerwash and Factory Reset irreversible actions; **disabled by default**                                                                                                                              |
 | `features_page`     | `features_group`                 | Updex feature toggles                                                                                                                                                                                   |
+| `features_page`     | `dx_group`                       | Developer Mode (gated on `/usr/share/ublue-os/image-info.json`)                                                                                                                                          |
+| `features_page`     | `gaming_group`                   | Gaming Mode optimizations (gated on `/usr/share/ublue-os/image-info.json`)                                                                                                                              |
+| `features_page`     | `ai_group`                       | Local AI language model served in rootless Quadlet/Podman container (configurable `ai_images`, `ai_model`)                                                                                             |
+| `features_page`     | `troubleshooting_group`          | Enhanced Troubleshooting AI assistant (gated on Homebrew)                                                                                                                                               |
 | `help_page`         | `help_resources_group`           | Configurable links (website, issues, chat)                                                                                                                                                              |
 
 ## Build and Release

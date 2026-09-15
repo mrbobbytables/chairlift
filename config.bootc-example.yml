@@ -19,6 +19,8 @@ system_page:
     app_id: io.missioncenter.MissionCenter  # App to launch for system monitoring
 
 updates_page:
+  update_all_group:
+    enabled: false  # Hide Update All so it cannot run Homebrew updates
   bootc_updates_group:
     enabled: true  # Requires /usr/libexec/bootc-update-stage
   sysupdate_updates_group:
@@ -48,12 +50,16 @@ maintenance_page:
       - title: Clean Up Boot Entries  # Display title for the action
         script: /usr/libexec/bls-gc  # Path to the script to execute
         sudo: true  # Whether the script requires administrator privileges
+  maintenance_brew_group:
+    enabled: false  # Hide Homebrew cleanup
   maintenance_optimization_group:
     enabled: true  # Show optimization tools
 
 features_page:
   features_group:
     enabled: false  # Enable only when updex is configured for this distribution
+  troubleshooting_group:
+    enabled: false  # Hide Homebrew-backed troubleshooting assistant
 
 help_page:
   help_resources_group:

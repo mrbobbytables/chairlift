@@ -154,12 +154,11 @@ func Diff(from, to Packages) Result {
 // before b, 1 when it sorts after, and 0 when they are equal or when the
 // comparison cannot be made.
 //
-// It is a segment-wise comparison in the shape rpm uses: runs of digits
-// compare numerically (so 10 follows 9), runs of letters compare
-// lexically, and separators are skipped. It deliberately does not try to
-// order two commit hashes or two version strings in unrelated formats —
-// those return 0 and land in Result.Changed, which is honest about not
-// knowing rather than guessing a direction.
+// It parses each version as an RPM [epoch:]version[-release] (EVR) and applies
+// RPM-compatible epoch, version, and release ordering (including tilde and caret
+// semantics). It deliberately does not try to order two commit hashes or
+// unsupported EVRs — those return 0 and land in Result.Changed, which is honest
+// about not knowing rather than guessing a direction.
 func CompareVersions(a, b string) int {
 	if a == b {
 		return 0
@@ -169,128 +168,251 @@ func CompareVersions(a, b string) int {
 		return 0
 	}
 
-	aSegments := versionSegments(a)
-	bSegments := versionSegments(b)
+	evrA, okA := parseEVR(a)
+	evrB, okB := parseEVR(b)
+	if !okA || !okB {
+		return 0
+	}
 
-	for i := 0; i < len(aSegments) && i < len(bSegments); i++ {
-		left, right := aSegments[i], bSegments[i]
+	// Compare Epoch: implicit "0" if omitted or empty
+	epochA := evrA.epoch
+	if epochA == "" {
+		epochA = "0"
+	}
+	epochB := evrB.epoch
+	if epochB == "" {
+		epochB = "0"
+	}
+	if rc := rpmvercmp(epochA, epochB); rc != 0 {
+		return rc
+	}
 
-		// rpm's tilde rule: a tilde-prefixed segment sorts before
-		// everything, which is how Fedora expresses a pre-release
-		// (1.0~rc1 precedes 1.0). Without it a release candidate reads as
-		// newer than the release it precedes.
-		if left == tildeSegment || right == tildeSegment {
-			if left == right {
-				continue
-			}
-			if left == tildeSegment {
-				return -1
-			}
-			return 1
-		}
+	// Compare Version
+	if rc := rpmvercmp(evrA.version, evrB.version); rc != 0 {
+		return rc
+	}
 
-		aNumeric := isNumeric(left)
-		bNumeric := isNumeric(right)
+	// Compare Release
+	return compareValues(evrA.release, evrB.release)
+}
 
-		switch {
-		case aNumeric && bNumeric:
-			left = strings.TrimLeft(left, "0")
-			right = strings.TrimLeft(right, "0")
-			if len(left) != len(right) {
-				if len(left) < len(right) {
-					return -1
-				}
-				return 1
-			}
-			if left != right {
-				if left < right {
-					return -1
-				}
-				return 1
-			}
-		case aNumeric != bNumeric:
-			// A numeric segment outranks an alphabetic one, which is what
-			// makes 1.0 newer than 1.0rc.
-			if aNumeric {
-				return 1
-			}
-			return -1
-		default:
-			if left != right {
-				if left < right {
-					return -1
-				}
-				return 1
-			}
+type evr struct {
+	epoch   string
+	version string
+	release string
+}
+
+func parseEVR(s string) (evr, bool) {
+	if s == "" {
+		return evr{}, false
+	}
+
+	// Must be ASCII and contain no whitespace or control characters.
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c <= ' ' || c > '~' {
+			return evr{}, false
 		}
 	}
 
-	// One version ran out of segments. The longer one is newer, unless its
-	// next segment is a tilde — 1.0 is newer than 1.0~rc1.
-	switch {
-	case len(aSegments) < len(bSegments):
-		if bSegments[len(aSegments)] == tildeSegment {
-			return 1
+	var parsed evr
+	rest := s
+
+	colonIdx := strings.IndexByte(s, ':')
+	if colonIdx != -1 {
+		// Only one epoch delimiter allowed.
+		if strings.IndexByte(s[colonIdx+1:], ':') != -1 {
+			return evr{}, false
 		}
-		return -1
-	case len(aSegments) > len(bSegments):
-		if aSegments[len(bSegments)] == tildeSegment {
-			return -1
+		epochPart := s[:colonIdx]
+		// Epoch must be numeric digits (or empty, which RPM treats as 0).
+		for i := 0; i < len(epochPart); i++ {
+			if !isDigit(epochPart[i]) {
+				return evr{}, false
+			}
 		}
+		parsed.epoch = epochPart
+		rest = s[colonIdx+1:]
+	}
+
+	if rest == "" {
+		return evr{}, false
+	}
+
+	dashIdx := strings.LastIndexByte(rest, '-')
+	if dashIdx != -1 {
+		parsed.version = rest[:dashIdx]
+		parsed.release = rest[dashIdx+1:]
+		if parsed.version == "" || parsed.release == "" || !hasAlnum(parsed.version) || !hasAlnum(parsed.release) {
+			return evr{}, false
+		}
+	} else {
+		parsed.version = rest
+		if !hasAlnum(parsed.version) {
+			return evr{}, false
+		}
+	}
+
+	return parsed, true
+}
+
+func compareValues(s1, s2 string) int {
+	if s1 == "" && s2 == "" {
+		return 0
+	}
+	if s1 != "" && s2 == "" {
 		return 1
 	}
-	return 0
+	if s1 == "" && s2 != "" {
+		return -1
+	}
+	return rpmvercmp(s1, s2)
 }
 
-// tildeSegment marks rpm's pre-release separator in a segment list.
-const tildeSegment = "~"
+// rpmvercmp implements RPM's rpmvercmp algorithm for comparing two version
+// or release strings.
+// Returns -1 when a < b, 1 when a > b, and 0 when a == b.
+func rpmvercmp(a, b string) int {
+	if a == b {
+		return 0
+	}
 
-// versionSegments splits a version into comparable runs of digits and
-// letters, dropping the separators between them.
-func versionSegments(version string) []string {
-	var segments []string
-	var current strings.Builder
-	var currentNumeric bool
+	i, j := 0, 0
+	for i < len(a) || j < len(b) {
+		for i < len(a) && !isAlnum(a[i]) && a[i] != '~' && a[i] != '^' {
+			i++
+		}
+		for j < len(b) && !isAlnum(b[j]) && b[j] != '~' && b[j] != '^' {
+			j++
+		}
 
-	flush := func() {
-		if current.Len() > 0 {
-			segments = append(segments, current.String())
-			current.Reset()
+		// Handle tilde separator: sorts before everything else.
+		if (i < len(a) && a[i] == '~') || (j < len(b) && b[j] == '~') {
+			if i >= len(a) || a[i] != '~' {
+				return 1
+			}
+			if j >= len(b) || b[j] != '~' {
+				return -1
+			}
+			i++
+			j++
+			continue
+		}
+
+		// Handle caret separator: sorts after base version (empty segment),
+		// but before any other character.
+		if (i < len(a) && a[i] == '^') || (j < len(b) && b[j] == '^') {
+			if i >= len(a) {
+				return -1
+			}
+			if j >= len(b) {
+				return 1
+			}
+			if a[i] != '^' {
+				return 1
+			}
+			if b[j] != '^' {
+				return -1
+			}
+			i++
+			j++
+			continue
+		}
+
+		// If we ran to the end of either string, break.
+		if i >= len(a) || j >= len(b) {
+			break
+		}
+
+		isNum := false
+		startI, startJ := i, j
+		if isDigit(a[i]) {
+			for i < len(a) && isDigit(a[i]) {
+				i++
+			}
+			for j < len(b) && isDigit(b[j]) {
+				j++
+			}
+			isNum = true
+		} else {
+			for i < len(a) && isAlpha(a[i]) {
+				i++
+			}
+			for j < len(b) && isAlpha(b[j]) {
+				j++
+			}
+			isNum = false
+		}
+
+		segA := a[startI:i]
+		segB := b[startJ:j]
+
+		// If two version segments are different types (one numeric, one alpha):
+		// numeric segments are always newer than alpha segments.
+		if len(segB) == 0 {
+			if isNum {
+				return 1
+			}
+			return -1
+		}
+
+		if isNum {
+			// Strip leading zeros.
+			trimmedA := strings.TrimLeft(segA, "0")
+			trimmedB := strings.TrimLeft(segB, "0")
+
+			// Whichever number has more digits wins.
+			if len(trimmedA) > len(trimmedB) {
+				return 1
+			}
+			if len(trimmedB) > len(trimmedA) {
+				return -1
+			}
+
+			if trimmedA > trimmedB {
+				return 1
+			}
+			if trimmedA < trimmedB {
+				return -1
+			}
+		} else {
+			if segA > segB {
+				return 1
+			}
+			if segA < segB {
+				return -1
+			}
 		}
 	}
 
-	for _, r := range version {
-		switch {
-		case unicode.IsDigit(r):
-			if current.Len() > 0 && !currentNumeric {
-				flush()
-			}
-			currentNumeric = true
-			current.WriteRune(r)
-		case unicode.IsLetter(r):
-			if current.Len() > 0 && currentNumeric {
-				flush()
-			}
-			currentNumeric = false
-			current.WriteRune(r)
-		case r == '~':
-			flush()
-			segments = append(segments, tildeSegment)
-		default:
-			flush()
-		}
+	if i >= len(a) && j >= len(b) {
+		return 0
 	}
-	flush()
-	return segments
+	if i >= len(a) {
+		return -1
+	}
+	return 1
 }
 
-func isNumeric(segment string) bool {
-	for _, r := range segment {
-		if !unicode.IsDigit(r) {
-			return false
+func isAlnum(b byte) bool {
+	return isDigit(b) || isAlpha(b)
+}
+
+func isDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func isAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func hasAlnum(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if isAlnum(s[i]) {
+			return true
 		}
 	}
-	return segment != ""
+	return false
 }
 
 // isHash reports whether a version is a git commit or content hash rather

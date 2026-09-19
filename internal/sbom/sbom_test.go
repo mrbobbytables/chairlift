@@ -152,6 +152,29 @@ func TestCompareVersions(t *testing.T) {
 		{"1.0~rc1", "1.0", -1},
 		{"1.0~rc1", "1.0~rc2", -1},
 		{"2:1.4", "2:1.5", -1},
+		// RPM epoch comparison: epoch 1 is newer than implicit epoch 0.
+		{"1:1.0", "2.0", 1},
+		{"1:1.0", "1:2.0", -1},
+		{"2:1.0", "10:1.0", -1},
+		{"10:1.0", "2:1.0", 1},
+		{"0:1.0", "1.0", 0},
+		{"01:1.0", "1:1.0", 0},
+		{"1:1.0-1", "1.0-2", 1},
+		// RPM caret comparison: caret snapshot is post-release (newer than base, older than next release).
+		{"2.0^20250611", "2.0.1", -1},
+		{"2.0^20250611", "2.0", 1},
+		{"2.0^20250611", "2.0^20250612", -1},
+		{"2.0~rc1", "2.0^20250611", -1},
+		{"1.0-1^20250611.fc44", "1.0-1.1.fc44", -1},
+		// Unsupported EVRs or invalid formats classify as unknown order (0).
+		{"foo:1.0", "1.0", 0},
+		{"1:2:3", "1.0", 0},
+		{"1:", "1.0", 0},
+		{"1.0-", "1.0", 0},
+		{"-1.0", "1.0", 0},
+		{"1.0 1", "1.0", 0},
+		{"", "1.0", 0},
+		{"...", "1.0", 0},
 		// Two hashes have no order.
 		{"3f8a2b1c9d4e5f6071829304a5b6c7d8e9f0a1b2", "c7d8e9f0a1b23f8a2b1c9d4e5f6071829304a5b6", 0},
 		// A hash against a version has no order either.
@@ -235,4 +258,29 @@ func TestCompareRejectsAMissingReference(t *testing.T) {
 	if _, err := Compare(context.Background(), fetch, "", "to"); err == nil {
 		t.Fatal("Compare accepted an empty running reference")
 	}
+}
+
+func TestDiffEVROrderingAndCaretSemantics(t *testing.T) {
+	from := Packages{
+		"snapshot-tool": "2.0^20250611",
+		"epoch-tool":    "1:1.0",
+		"bad-evr-tool":  "foo:1.0",
+	}
+	to := Packages{
+		"snapshot-tool": "2.0.1",
+		"epoch-tool":    "2.0",
+		"bad-evr-tool":  "2.0",
+	}
+
+	result := Diff(from, to)
+
+	assertChanges(t, "upgraded", result.Upgraded, map[string][2]string{
+		"snapshot-tool": {"2.0^20250611", "2.0.1"},
+	})
+	assertChanges(t, "downgraded", result.Downgraded, map[string][2]string{
+		"epoch-tool": {"1:1.0", "2.0"},
+	})
+	assertChanges(t, "changed", result.Changed, map[string][2]string{
+		"bad-evr-tool": {"foo:1.0", "2.0"},
+	})
 }

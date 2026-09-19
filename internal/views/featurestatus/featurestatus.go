@@ -45,18 +45,29 @@ type Status struct {
 	Subtitle string
 	// HasUpdate reports whether any component of the feature has an update.
 	HasUpdate bool
+	// Incomplete reports whether the feature's update check was incomplete or failed.
+	Incomplete bool
 }
 
 // Feature derives the row state for the feature called name from the check
 // results of all of its components.
 //
-// The second return value is false when results is empty: the check reported
-// nothing about this feature, so the caller must leave the row's existing
-// subtitle untouched and must not count the feature. The returned Status is
-// then meaningless and is not part of the caller contract.
+// When results is empty (e.g. per-component manifest/version lookup failed in updex),
+// Feature returns a Status reflecting that the check failed for this feature and
+// marks it Incomplete.
+//
+// The second return value is false only when name is empty.
 func Feature(name string, results []updex.CheckResult) (Status, bool) {
-	if len(results) == 0 {
+	if name == "" {
 		return Status{}, false
+	}
+
+	if len(results) == 0 {
+		return Status{
+			Subtitle:   fmt.Sprintf("%s — update check failed", name),
+			HasUpdate:  false,
+			Incomplete: true,
+		}, true
 	}
 
 	updates := make([]updex.CheckResult, 0, len(results))
@@ -73,6 +84,9 @@ func Feature(name string, results []updex.CheckResult) (Status, bool) {
 }
 
 func subtitleText(name string, results, updates []updex.CheckResult) string {
+	if len(results) == 0 {
+		return fmt.Sprintf("%s — update check failed", name)
+	}
 	switch len(updates) {
 	case 0:
 		if version, ok := commonVersion(results); ok {
@@ -110,7 +124,8 @@ func commonVersion(results []updex.CheckResult) (string, bool) {
 }
 
 // GroupDescription is the features group's description after a check that
-// completed. featuresWithUpdates is a count of features, not of components.
+// completed with every component successfully checked. featuresWithUpdates is
+// a count of features, not of components.
 func GroupDescription(totalFeatures, featuresWithUpdates int) string {
 	switch featuresWithUpdates {
 	case 0:
@@ -122,11 +137,32 @@ func GroupDescription(totalFeatures, featuresWithUpdates int) string {
 	}
 }
 
+// GroupDescriptionIncomplete is the features group's description when an update
+// check was incomplete because one or more components could not be checked. It
+// presents an incomplete state instead of claiming that features are current.
+func GroupDescriptionIncomplete(totalFeatures, featuresWithUpdates int) string {
+	switch featuresWithUpdates {
+	case 0:
+		return fmt.Sprintf("%s — update check incomplete", available(totalFeatures))
+	case 1:
+		return fmt.Sprintf("%s (1 update) — update check incomplete", available(totalFeatures))
+	default:
+		return fmt.Sprintf("%s (%d updates) — update check incomplete", available(totalFeatures), featuresWithUpdates)
+	}
+}
+
 // GroupDescriptionCheckFailed is the features group's description when the
 // update check itself failed. It makes no claim about update state: a failed
 // check neither found updates nor established that there are none.
 func GroupDescriptionCheckFailed(totalFeatures int) string {
 	return fmt.Sprintf("%s — update check failed", available(totalFeatures))
+}
+
+// GroupDescriptionCheckIncomplete is the features group's description when an
+// update check was incomplete and found no updates. It makes no claim that features
+// are current.
+func GroupDescriptionCheckIncomplete(totalFeatures int) string {
+	return GroupDescriptionIncomplete(totalFeatures, 0)
 }
 
 // available reproduces loadFeatures' own pre-check fragment verbatim, including

@@ -6,9 +6,11 @@ package updex
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/frostyard/std/reporter"
 	updexapi "github.com/frostyard/updex/updex"
 	"github.com/projectbluefin/chairlift/internal/helperexec"
 	"github.com/projectbluefin/chairlift/internal/pkexec"
@@ -104,13 +106,43 @@ func ListFeatures(ctx context.Context) ([]Feature, error) {
 	return features, nil
 }
 
-// CheckFeatures checks enabled features for available updates
-func CheckFeatures(ctx context.Context) ([]FeatureCheck, error) {
-	checks, err := getClient().CheckFeatures(ctx, updexapi.CheckFeaturesOptions{})
+// warningCapturingReporter captures warnings emitted by updex during operations.
+type warningCapturingReporter struct {
+	reporter.NoopReporter
+	mu       sync.Mutex
+	warnings []string
+}
+
+func (r *warningCapturingReporter) Warning(format string, args ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.warnings = append(r.warnings, fmt.Sprintf(format, args...))
+}
+
+func (r *warningCapturingReporter) Warnings() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.warnings)
+}
+
+// featuresChecker is an unexported injection seam for feature update checking,
+// allowing check behavior (checks, warnings, error) to be tested without
+// relying on host system definitions or network access.
+var featuresChecker = func(ctx context.Context) ([]FeatureCheck, []string, error) {
+	rep := &warningCapturingReporter{}
+	client := updexapi.NewClient(updexapi.ClientConfig{Progress: rep})
+	checks, err := client.CheckFeatures(ctx, updexapi.CheckFeaturesOptions{})
 	if err != nil {
-		return nil, &Error{Message: fmt.Sprintf("failed to check features: %v", err)}
+		return nil, rep.Warnings(), &Error{Message: fmt.Sprintf("failed to check features: %v", err)}
 	}
-	return checks, nil
+	return checks, rep.Warnings(), nil
+}
+
+// CheckFeatures checks enabled features for available updates, returning the
+// per-feature results, any warnings emitted during the check (such as per-component
+// manifest or version failures), and any top-level error.
+func CheckFeatures(ctx context.Context) ([]FeatureCheck, []string, error) {
+	return featuresChecker(ctx)
 }
 
 // EnableFeature enables a feature for download

@@ -231,4 +231,76 @@ func TestUpdexAvailabilityRequiresNonEmptyFeatures(t *testing.T) {
 			t.Fatal("IsInstalled() = false with non-empty features, want true")
 		}
 	})
+func TestCheckFeaturesReturnsResultsAndRetainsWarnings(t *testing.T) {
+	origChecker := featuresChecker
+	t.Cleanup(func() { featuresChecker = origChecker })
+
+	expectedChecks := []FeatureCheck{
+		{
+			Feature: "demo",
+			Results: []CheckResult{
+				{
+					Component:       "comp1",
+					CurrentVersion:  "1.0",
+					NewestVersion:   "2.0",
+					UpdateAvailable: true,
+				},
+			},
+		},
+	}
+	expectedWarnings := []string{
+		"failed to get available versions for comp2: 404 Not Found",
+	}
+
+	featuresChecker = func(ctx context.Context) ([]FeatureCheck, []string, error) {
+		return expectedChecks, expectedWarnings, nil
+	}
+
+	ctx := context.Background()
+	checks, warnings, err := CheckFeatures(ctx)
+	if err != nil {
+		t.Fatalf("CheckFeatures() returned unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(checks, expectedChecks) {
+		t.Fatalf("CheckFeatures() checks = %#v, want %#v", checks, expectedChecks)
+	}
+	if !reflect.DeepEqual(warnings, expectedWarnings) {
+		t.Fatalf("CheckFeatures() warnings = %#v, want %#v", warnings, expectedWarnings)
+	}
+}
+
+func TestCheckFeaturesPropagatesError(t *testing.T) {
+	origChecker := featuresChecker
+	t.Cleanup(func() { featuresChecker = origChecker })
+
+	expectedErr := errors.New("check failed")
+	expectedWarnings := []string{"manifest error"}
+
+	featuresChecker = func(ctx context.Context) ([]FeatureCheck, []string, error) {
+		return nil, expectedWarnings, expectedErr
+	}
+
+	ctx := context.Background()
+	checks, warnings, err := CheckFeatures(ctx)
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("CheckFeatures() error = %v, want %v", err, expectedErr)
+	}
+	if checks != nil {
+		t.Fatalf("CheckFeatures() checks = %#v, want nil", checks)
+	}
+	if !reflect.DeepEqual(warnings, expectedWarnings) {
+		t.Fatalf("CheckFeatures() warnings = %#v, want %#v", warnings, expectedWarnings)
+	}
+}
+
+func TestWarningCapturingReporterCapturesFormattedWarnings(t *testing.T) {
+	rep := &warningCapturingReporter{}
+	rep.Warning("warning %d: %s", 1, "test")
+	rep.Warning("second warning")
+
+	got := rep.Warnings()
+	want := []string{"warning 1: test", "second warning"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Warnings() = %#v, want %#v", got, want)
+	}
 }

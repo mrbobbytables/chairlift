@@ -152,7 +152,7 @@ func (uh *UserHome) checkFeatureUpdates(totalFeatures int) {
 	ctx, cancel := updex.DefaultContext()
 	defer cancel()
 
-	checks, err := updex.CheckFeatures(ctx)
+	checks, warnings, err := updex.CheckFeatures(ctx)
 
 	sgtk.RunOnMainThread(func() {
 		if err != nil {
@@ -163,6 +163,11 @@ func (uh *UserHome) checkFeatureUpdates(totalFeatures int) {
 			return
 		}
 
+		for _, w := range warnings {
+			log.Printf("Feature update check warning: %s", w)
+		}
+
+		incomplete := len(warnings) > 0
 		updateCount := 0
 		for _, check := range checks {
 			row, ok := uh.featureRows[check.Feature]
@@ -179,10 +184,17 @@ func (uh *UserHome) checkFeatureUpdates(totalFeatures int) {
 			if status.HasUpdate {
 				updateCount++
 			}
+			if status.Incomplete {
+				incomplete = true
+			}
 		}
 
 		if uh.featuresGroup != nil {
-			uh.featuresGroup.SetDescription(featurestatus.GroupDescription(totalFeatures, updateCount))
+			if incomplete {
+				uh.featuresGroup.SetDescription(featurestatus.GroupDescriptionIncomplete(totalFeatures, updateCount))
+			} else {
+				uh.featuresGroup.SetDescription(featurestatus.GroupDescription(totalFeatures, updateCount))
+			}
 		}
 	})
 }

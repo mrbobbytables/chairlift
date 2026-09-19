@@ -14,12 +14,13 @@ import (
 // differing between cases.
 const featureName = "f"
 
-// branch identifies which of the five subtitle branches a case exercises. The
+// branch identifies which of the six subtitle branches a case exercises. The
 // distinctness assertion compares one representative case per branch.
 type branch string
 
 const (
 	branchNone         branch = ""
+	branchFailed       branch = "zero components, failed check"
 	branchOneVersioned branch = "one update, known current version"
 	branchOneUnknown   branch = "one update, empty current version"
 	branchMany         branch = "several updates"
@@ -49,16 +50,18 @@ func res(component, current, newest string, update bool) updex.CheckResult {
 func tableCases() []caseSpec {
 	return []caseSpec{
 		{
-			name:    "zero components",
+			name:    "zero components, nil results",
 			results: nil,
-			wantOK:  false,
-			branch:  branchNone,
+			want:    "f — update check failed",
+			wantOK:  true,
+			branch:  branchFailed,
 		},
 		{
 			name:    "zero components, empty slice",
 			results: []updex.CheckResult{},
-			wantOK:  false,
-			branch:  branchNone,
+			want:    "f — update check failed",
+			wantOK:  true,
+			branch:  branchFailed,
 		},
 		{
 			name: "update in the first component only",
@@ -185,6 +188,12 @@ func TestFeatureTable(t *testing.T) {
 				t.Errorf("Feature(%q, %#v).HasUpdate = %t, want %t",
 					featureName, tc.results, got.HasUpdate, wantUpdate)
 			}
+
+			wantIncomplete := len(tc.results) == 0
+			if got.Incomplete != wantIncomplete {
+				t.Errorf("Feature(%q, %#v).Incomplete = %t, want %t",
+					featureName, tc.results, got.Incomplete, wantIncomplete)
+			}
 		})
 	}
 }
@@ -217,14 +226,26 @@ func TestFeatureHasUpdateWhenAnyComponentReportsOne(t *testing.T) {
 	}
 }
 
-func TestFeatureWithZeroComponentsIsSkipped(t *testing.T) {
+func TestFeatureWithZeroComponentsReportsFailedCheck(t *testing.T) {
 	for _, results := range [][]updex.CheckResult{nil, {}} {
-		// The caller contract is "leave the row alone"; the Status is not
-		// relied upon, so only ok is asserted.
-		if _, ok := Feature(featureName, results); ok {
-			t.Errorf("Feature(%q, %#v) ok = true, want false so the caller leaves the existing subtitle untouched",
-				featureName, results)
+		got, ok := Feature(featureName, results)
+		if !ok {
+			t.Fatalf("Feature(%q, %#v) ok = false, want true", featureName, results)
 		}
+		want := fmt.Sprintf("%s — update check failed", featureName)
+		if got.Subtitle != want {
+			t.Errorf("Subtitle = %q, want %q", got.Subtitle, want)
+		}
+		if got.HasUpdate {
+			t.Errorf("HasUpdate = true, want false")
+		}
+		if !got.Incomplete {
+			t.Errorf("Incomplete = false, want true")
+		}
+	}
+
+	if _, ok := Feature("", nil); ok {
+		t.Errorf("Feature(%q, nil) ok = true, want false", "")
 	}
 }
 
@@ -281,8 +302,8 @@ func TestSubtitleBranchesArePairwiseDistinct(t *testing.T) {
 		seen[tc.branch] = got.Subtitle
 	}
 
-	if len(seen) != 5 {
-		t.Fatalf("covered %d subtitle branches, want all 5", len(seen))
+	if len(seen) != 6 {
+		t.Fatalf("covered %d subtitle branches, want all 6", len(seen))
 	}
 
 	for a, subA := range seen {
@@ -382,13 +403,60 @@ func TestGroupDescriptionCheckFailedSaysSo(t *testing.T) {
 	}
 }
 
+func TestGroupDescriptionIncompleteZeroUpdates(t *testing.T) {
+	got := GroupDescriptionIncomplete(9, 0)
+	const want = "9 features available — update check incomplete"
+	if got != want {
+		t.Errorf("GroupDescriptionIncomplete(9, 0) = %q, want %q", got, want)
+	}
+	for _, forbidden := range []string{"(0 updates)", "all up to date"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("GroupDescriptionIncomplete(9, 0) = %q, must not contain %q", got, forbidden)
+		}
+	}
+	if got == preCheckDescription {
+		t.Errorf("GroupDescriptionIncomplete(9, 0) = %q, want it to differ from the pre-check string %q",
+			got, preCheckDescription)
+	}
+}
+
+func TestGroupDescriptionIncompleteSingular(t *testing.T) {
+	got := GroupDescriptionIncomplete(9, 1)
+	const want = "9 features available (1 update) — update check incomplete"
+	if got != want {
+		t.Errorf("GroupDescriptionIncomplete(9, 1) = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "1 updates") {
+		t.Errorf("GroupDescriptionIncomplete(9, 1) = %q, must not contain %q", got, "1 updates")
+	}
+}
+
+func TestGroupDescriptionIncompletePlural(t *testing.T) {
+	got := GroupDescriptionIncomplete(9, 3)
+	const want = "9 features available (3 updates) — update check incomplete"
+	if got != want {
+		t.Errorf("GroupDescriptionIncomplete(9, 3) = %q, want %q", got, want)
+	}
+}
+
+func TestGroupDescriptionCheckIncompleteConvenience(t *testing.T) {
+	got := GroupDescriptionCheckIncomplete(9)
+	want := GroupDescriptionIncomplete(9, 0)
+	if got != want {
+		t.Errorf("GroupDescriptionCheckIncomplete(9) = %q, want %q", got, want)
+	}
+}
+
 func TestGroupDescriptionsAreDistinct(t *testing.T) {
 	descriptions := map[string]string{
-		"failed":       GroupDescriptionCheckFailed(9),
-		"zero updates": GroupDescription(9, 0),
-		"one update":   GroupDescription(9, 1),
-		"many updates": GroupDescription(9, 3),
-		"pre-check":    preCheckDescription,
+		"failed":                GroupDescriptionCheckFailed(9),
+		"zero updates":          GroupDescription(9, 0),
+		"one update":            GroupDescription(9, 1),
+		"many updates":          GroupDescription(9, 3),
+		"incomplete zero":       GroupDescriptionIncomplete(9, 0),
+		"incomplete one update": GroupDescriptionIncomplete(9, 1),
+		"incomplete many":       GroupDescriptionIncomplete(9, 3),
+		"pre-check":             preCheckDescription,
 	}
 
 	seen := make(map[string]string)

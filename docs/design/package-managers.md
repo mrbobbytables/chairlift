@@ -722,7 +722,7 @@ Type aliases to `github.com/frostyard/updex/updex`:
 
 | Function | Implementation | Mode | Timeout | Notes |
 |----------|---------------|------|---------|-------|
-| `IsInstalled()` | Go library: `client.Features()` | Direct | 3s | Checks if updex features are configured |
+| `IsInstalled()` | Go library: `client.Features()` | Direct | 3s | Checks if updex features are configured (requires `err == nil` and `len(features) > 0`) |
 | `IsInstalledCached()` | Cached `IsInstalled()` | Direct | — | `sync.Once`, runs check at most once |
 | `ListFeatures()` | Go library: `client.Features()` | Direct | 5min | Returns `[]Feature` |
 | `CheckFeatures()` | Go library: `client.CheckFeatures()` | Direct | 5min | Returns `[]FeatureCheck` |

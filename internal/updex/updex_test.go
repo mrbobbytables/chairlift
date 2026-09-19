@@ -200,3 +200,35 @@ func TestDryRunStateAndDefaultContext(t *testing.T) {
 		t.Fatalf("DefaultContext deadline remaining = %v, want approximately %v", remaining, DefaultTimeout)
 	}
 }
+
+func TestUpdexAvailabilityRequiresNonEmptyFeatures(t *testing.T) {
+	origLister := featuresLister
+	t.Cleanup(func() { featuresLister = origLister })
+
+	t.Run("returns false when feature list is empty", func(t *testing.T) {
+		featuresLister = func(ctx context.Context) ([]Feature, error) {
+			return []Feature{}, nil
+		}
+		if IsInstalled() {
+			t.Fatal("IsInstalled() = true with empty feature list, want false")
+		}
+	})
+
+	t.Run("returns false when features listing returns error", func(t *testing.T) {
+		featuresLister = func(ctx context.Context) ([]Feature, error) {
+			return nil, errors.New("failed to read features")
+		}
+		if IsInstalled() {
+			t.Fatal("IsInstalled() = true with listing error, want false")
+		}
+	})
+
+	t.Run("returns true when features list is non-empty and error is nil", func(t *testing.T) {
+		featuresLister = func(ctx context.Context) ([]Feature, error) {
+			return []Feature{{Name: "test-feature", Enabled: true}}, nil
+		}
+		if !IsInstalled() {
+			t.Fatal("IsInstalled() = false with non-empty features, want true")
+		}
+	})
+}

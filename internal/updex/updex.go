@@ -64,13 +64,22 @@ func getClient() *updexapi.Client {
 	return apiClient
 }
 
-// IsInstalled checks if updex features are configured on this system
+// featuresLister is an unexported injection seam for feature listing, allowing
+// availability check behavior (empty, populated, or error) to be tested without
+// relying on host system definitions.
+var featuresLister = func(ctx context.Context) ([]Feature, error) {
+	return getClient().Features(ctx)
+}
+
+// IsInstalled checks if updex features are configured on this system.
+// It returns true only if updex features can be listed without error and at least
+// one feature definition is present. An empty feature list is treated as unavailable.
 func IsInstalled() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	_, err := getClient().Features(ctx)
-	return err == nil
+	features, err := featuresLister(ctx)
+	return err == nil && len(features) > 0
 }
 
 var (

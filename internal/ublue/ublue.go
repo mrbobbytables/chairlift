@@ -129,6 +129,11 @@ var descriptorOverride string
 // path. Callers must only use it in dry-run mode; see descriptorOverride.
 func SetDescriptorOverride(path string) {
 	descriptorOverride = path
+	if path != "" {
+		ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return imageinfo.Load(path) })
+	} else {
+		ubluehelper.SetDetectInfo(imageinfo.Detect)
+	}
 	log.Printf("ublue image descriptor override: %s", path)
 }
 

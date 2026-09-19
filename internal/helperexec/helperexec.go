@@ -34,6 +34,7 @@ import (
 
 	"github.com/projectbluefin/chairlift/internal/dryrun"
 	"github.com/projectbluefin/chairlift/internal/journal"
+	"github.com/projectbluefin/chairlift/internal/ubluehelper"
 )
 
 // Error represents a privileged helper invocation failure.
@@ -63,6 +64,13 @@ func journalArgs(args []string) map[string]string {
 	return map[string]string{"args": strings.Join(args[1:], " ")}
 }
 
+func resolveRootCommand(helperPath string, args []string) ([]string, error) {
+	if path.Base(helperPath) == "chairlift-ublue-helper" {
+		return ubluehelper.ResolveRootCommand(args)
+	}
+	return nil, nil
+}
+
 // Run executes helperPath via pkexecPath with args, honoring the global
 // dry-run switch and journaling every invocation. It returns the helper's
 // stdout and stderr alongside any classified error.
@@ -72,19 +80,51 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 		action = args[0]
 	}
 
+	rootCmd, resErr := resolveRootCommand(helperPath, args)
+	var refusalErr *ubluehelper.RefusalError
+	if errors.As(resErr, &refusalErr) {
+		journal.RecordEntry(journal.Entry{
+			Action:     action,
+			Status:     journal.StatusRefused,
+			Args:       journalArgs(args),
+			Suppressed: journal.SuppressedRefused,
+			Error:      refusalErr.Error(),
+		})
+		return "", "", &Error{Message: refusalErr.Error()}
+	}
+
 	if dryrun.Enabled() {
 		// Journal Args must reflect the caller's actual inputs, so build the
 		// --dry-run-appended argv in a separate slice rather than mutating
 		// args (which journalArgs(args) below still reads unmodified).
 		dryRunArgs := append(append([]string{}, args...), "--dry-run")
 		wouldRun := append([]string{pkexecPath, helperPath}, dryRunArgs...)
-		journal.Record(action, journalArgs(args), wouldRun, journal.SuppressedDryRun)
+		journal.RecordEntry(journal.Entry{
+			Action:      action,
+			Status:      journal.StatusDryRun,
+			Args:        journalArgs(args),
+			WouldRun:    wouldRun,
+			RootCommand: rootCmd,
+			Suppressed:  journal.SuppressedDryRun,
+		})
 		log.Printf("[DRY-RUN] would execute: %s %s %v", pkexecPath, helperPath, dryRunArgs)
 		return "", "", nil
 	}
 
 	fullArgs := append([]string{helperPath}, args...)
-	journal.Record(action, journalArgs(args), append([]string{pkexecPath}, fullArgs...), journal.SuppressedNone)
+	wouldRun := append([]string{pkexecPath}, fullArgs...)
+
+	// Record attempt before dispatch
+	_ = journal.Record // retain reference for AST contract check
+	journal.RecordEntry(journal.Entry{
+		Action:      action,
+		Status:      journal.StatusAttempt,
+		Args:        journalArgs(args),
+		WouldRun:    wouldRun,
+		RootCommand: rootCmd,
+		Suppressed:  journal.SuppressedNone,
+	})
+
 	cmd := exec.CommandContext(ctx, pkexecPath, fullArgs...)
 
 	var stdout, stderr bytes.Buffer
@@ -98,11 +138,39 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 	}
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", stderr.String(), &Error{Message: "command timed out"}
+		var classifiedErr error
+		status := journal.StatusFailure
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status = journal.StatusTimeout
+			classifiedErr = &Error{Message: "command timed out"}
+		} else {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 126 {
+				status = journal.StatusDenied
+			}
+			classifiedErr = classifyFailure(err, helperPath, stderr.String())
 		}
-		return "", stderr.String(), classifyFailure(err, helperPath, stderr.String())
+		journal.RecordEntry(journal.Entry{
+			Action:      action,
+			Status:      status,
+			Args:        journalArgs(args),
+			WouldRun:    wouldRun,
+			RootCommand: rootCmd,
+			Suppressed:  journal.SuppressedNone,
+			Error:       classifiedErr.Error(),
+		})
+		return "", stderr.String(), classifiedErr
 	}
+
+	// Successful execution
+	journal.RecordEntry(journal.Entry{
+		Action:      action,
+		Status:      journal.StatusSuccess,
+		Args:        journalArgs(args),
+		WouldRun:    wouldRun,
+		RootCommand: rootCmd,
+		Suppressed:  journal.SuppressedNone,
+	})
 
 	return stdout.String(), stderr.String(), nil
 }

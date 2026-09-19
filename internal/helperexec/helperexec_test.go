@@ -11,9 +11,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/projectbluefin/chairlift/internal/dryrun"
+	"github.com/projectbluefin/chairlift/internal/imageinfo"
 	"github.com/projectbluefin/chairlift/internal/journal"
+	"github.com/projectbluefin/chairlift/internal/ubluehelper"
 )
 
 // writeFakePkexec writes an executable shell script standing in for pkexec:
@@ -167,6 +170,184 @@ func TestRunJournalsDryRunFlagAsSuppressed(t *testing.T) {
 	wantArgs := map[string]string{"args": "arg1"}
 	if !reflect.DeepEqual(entry.Args, wantArgs) {
 		t.Errorf("journalled Args = %v, want %v (must not include --dry-run)", entry.Args, wantArgs)
+	}
+}
+
+func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
+	fakePkexec := writeFakePkexec(t, capturedArgsFile)
+
+	info := imageinfo.Info{Name: "dakota", Tag: "latest", Ref: "docker://ghcr.io/projectbluefin/dakota"}
+	restore := ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
+	t.Cleanup(restore)
+
+	helperPath := "/usr/bin/chairlift-ublue-helper"
+	if _, _, err := Run(context.Background(), fakePkexec, helperPath, "channel-switch", "testing"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries := readJournal(t, journalPath)
+	if len(entries) != 2 {
+		t.Fatalf("journal has %d entries, want 2", len(entries))
+	}
+
+	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
+	wantWouldRun := []string{fakePkexec, helperPath, "channel-switch", "testing"}
+
+	attempt := entries[0]
+	if attempt.Status != journal.StatusAttempt {
+		t.Errorf("attempt status = %q, want %q", attempt.Status, journal.StatusAttempt)
+	}
+	if attempt.Suppressed != journal.SuppressedNone {
+		t.Errorf("attempt suppressed = %q, want %q", attempt.Suppressed, journal.SuppressedNone)
+	}
+	if !reflect.DeepEqual(attempt.WouldRun, wantWouldRun) {
+		t.Errorf("attempt WouldRun = %v, want %v", attempt.WouldRun, wantWouldRun)
+	}
+	if !reflect.DeepEqual(attempt.RootCommand, wantRootCmd) {
+		t.Errorf("attempt RootCommand = %v, want %v", attempt.RootCommand, wantRootCmd)
+	}
+
+	success := entries[1]
+	if success.Status != journal.StatusSuccess {
+		t.Errorf("success status = %q, want %q", success.Status, journal.StatusSuccess)
+	}
+	if success.Suppressed != journal.SuppressedNone {
+		t.Errorf("success suppressed = %q, want %q", success.Suppressed, journal.SuppressedNone)
+	}
+	if !reflect.DeepEqual(success.RootCommand, wantRootCmd) {
+		t.Errorf("success RootCommand = %v, want %v", success.RootCommand, wantRootCmd)
+	}
+}
+
+func TestRunJournalsPolicyKitDenied(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	deniedScript := filepath.Join(t.TempDir(), "denied-pkexec")
+	if err := os.WriteFile(deniedScript, []byte("#!/bin/sh\necho 'dismissed' >&2\nexit 126\n"), 0o755); err != nil {
+		t.Fatalf("writing denied pkexec: %v", err)
+	}
+
+	info := imageinfo.Info{Name: "dakota", Tag: "latest", Ref: "docker://ghcr.io/projectbluefin/dakota"}
+	restore := ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
+	t.Cleanup(restore)
+
+	helperPath := "/usr/bin/chairlift-ublue-helper"
+	_, _, err := Run(context.Background(), deniedScript, helperPath, "channel-switch", "testing")
+	if err == nil {
+		t.Fatal("Run error = nil, want error for exit 126")
+	}
+
+	entries := readJournal(t, journalPath)
+	if len(entries) != 2 {
+		t.Fatalf("journal has %d entries, want 2", len(entries))
+	}
+
+	if entries[0].Status != journal.StatusAttempt {
+		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
+	}
+
+	denied := entries[1]
+	if denied.Status != journal.StatusDenied {
+		t.Errorf("entry 1 status = %q, want %q", denied.Status, journal.StatusDenied)
+	}
+	if denied.Suppressed != journal.SuppressedNone {
+		t.Errorf("entry 1 suppressed = %q, want %q", denied.Suppressed, journal.SuppressedNone)
+	}
+	if !strings.Contains(denied.Error, "126") {
+		t.Errorf("entry 1 error = %q, want exit 126", denied.Error)
+	}
+	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
+	if !reflect.DeepEqual(denied.RootCommand, wantRootCmd) {
+		t.Errorf("entry 1 RootCommand = %v, want %v", denied.RootCommand, wantRootCmd)
+	}
+}
+
+func TestRunJournalsTimeout(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	hangingScript := filepath.Join(t.TempDir(), "hanging-pkexec")
+	if err := os.WriteFile(hangingScript, []byte("#!/bin/sh\nsleep 1\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("writing hanging pkexec: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	helperPath := "/usr/bin/chairlift-ublue-helper"
+	_, _, err := Run(ctx, hangingScript, helperPath, "restart")
+	if err == nil {
+		t.Fatal("Run error = nil, want timeout")
+	}
+
+	entries := readJournal(t, journalPath)
+	if len(entries) != 2 {
+		t.Fatalf("journal has %d entries, want 2", len(entries))
+	}
+
+	if entries[0].Status != journal.StatusAttempt {
+		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
+	}
+	timeoutEntry := entries[1]
+	if timeoutEntry.Status != journal.StatusTimeout {
+		t.Errorf("entry 1 status = %q, want %q", timeoutEntry.Status, journal.StatusTimeout)
+	}
+	if timeoutEntry.Error != "command timed out" {
+		t.Errorf("entry 1 error = %q, want command timed out", timeoutEntry.Error)
+	}
+	wantRootCmd := []string{"systemctl", "reboot"}
+	if !reflect.DeepEqual(timeoutEntry.RootCommand, wantRootCmd) {
+		t.Errorf("entry 1 RootCommand = %v, want %v", timeoutEntry.RootCommand, wantRootCmd)
+	}
+}
+
+func TestRunJournalsRefusalWithoutInvokingPkexec(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	// Host descriptor has no testing counterpart
+	info := imageinfo.Info{Name: "bluefin", Tag: "stable", Ref: "docker://ghcr.io/ublue-os/bluefin"}
+	restore := ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
+	t.Cleanup(restore)
+
+	neverExecPkexec := filepath.Join(t.TempDir(), "pkexec-never-run")
+
+	helperPath := "/usr/bin/chairlift-ublue-helper"
+	_, _, err := Run(context.Background(), neverExecPkexec, helperPath, "channel-switch", "testing")
+	if err == nil {
+		t.Fatal("Run error = nil, want refusal error")
+	}
+
+	if _, statErr := os.Stat(neverExecPkexec); statErr == nil {
+		t.Error("pkexec was executed despite refusal")
+	}
+
+	entries := readJournal(t, journalPath)
+	if len(entries) != 1 {
+		t.Fatalf("journal has %d entries, want 1", len(entries))
+	}
+	refused := entries[0]
+	if refused.Status != journal.StatusRefused {
+		t.Errorf("refused status = %q, want %q", refused.Status, journal.StatusRefused)
+	}
+	if refused.Suppressed != journal.SuppressedRefused {
+		t.Errorf("refused suppressed = %q, want %q", refused.Suppressed, journal.SuppressedRefused)
+	}
+	if !strings.Contains(refused.Error, "no testing image is defined") {
+		t.Errorf("refused error = %q, want explanation", refused.Error)
 	}
 }
 

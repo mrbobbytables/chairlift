@@ -622,3 +622,92 @@ func TestGroupArgsMatchBluefinctlCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveRootCommand(t *testing.T) {
+	info := imageinfo.Info{Name: "dakota", Tag: "latest", Ref: "docker://ghcr.io/projectbluefin/dakota"}
+	restore := SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
+	t.Cleanup(restore)
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantCmd []string
+		wantErr bool
+	}{
+		{
+			name:    "channel switch testing",
+			args:    []string{"channel-switch", "testing"},
+			wantCmd: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"},
+		},
+		{
+			name:    "driver switch nvidia",
+			args:    []string{"driver-switch", "nvidia"},
+			wantCmd: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota-nvidia:latest"},
+		},
+		{
+			name:    "restart",
+			args:    []string{"restart"},
+			wantCmd: []string{"systemctl", "reboot"},
+		},
+		{
+			name:    "rollback",
+			args:    []string{"rollback"},
+			wantCmd: []string{"bootc", "rollback"},
+		},
+		{
+			name:    "factory-reset",
+			args:    []string{"factory-reset"},
+			wantCmd: []string{"bootc", "install", "reset", "--experimental", "--apply"},
+		},
+		{
+			name:    "auto-updates-enable",
+			args:    []string{"auto-updates-enable"},
+			wantCmd: []string{"systemctl", "enable", "--now", autoupdate.TimerUnit},
+		},
+		{
+			name:    "auto-updates-disable",
+			args:    []string{"auto-updates-disable"},
+			wantCmd: []string{"systemctl", "disable", "--now", autoupdate.TimerUnit},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveRootCommand(tc.args)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ResolveRootCommand() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if !reflect.DeepEqual(got, tc.wantCmd) {
+				t.Errorf("ResolveRootCommand() = %v, want %v", got, tc.wantCmd)
+			}
+		})
+	}
+}
+
+func TestResolveRootCommandRefusals(t *testing.T) {
+	// Pinned build has no testing counterpart
+	info := imageinfo.Info{Name: "dakota", Tag: "20260817", Ref: "docker://ghcr.io/projectbluefin/dakota"}
+	restore := SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
+	t.Cleanup(restore)
+
+	_, err := ResolveRootCommand([]string{"channel-switch", "testing"})
+	if err == nil {
+		t.Fatal("ResolveRootCommand() error = nil, want refusal for unswitchable channel")
+	}
+	var refusalErr *RefusalError
+	if !reflect.TypeOf(err).AssignableTo(reflect.TypeOf(refusalErr)) {
+		t.Errorf("error type = %T, want *RefusalError", err)
+	}
+
+	// LTS host asking for NVIDIA driver
+	ltsInfo := imageinfo.Info{Name: "bluefin", Tag: "lts", Ref: "docker://ghcr.io/ublue-os/bluefin"}
+	SetDetectInfo(func() (imageinfo.Info, error) { return ltsInfo, nil })
+
+	_, err = ResolveRootCommand([]string{"driver-switch", "nvidia"})
+	if err == nil {
+		t.Fatal("ResolveRootCommand() error = nil, want refusal for unpublished driver")
+	}
+	if !reflect.TypeOf(err).AssignableTo(reflect.TypeOf(refusalErr)) {
+		t.Errorf("error type = %T, want *RefusalError", err)
+	}
+}

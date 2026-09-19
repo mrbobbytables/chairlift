@@ -25,6 +25,7 @@ package ubluehelper
 
 import (
 	"fmt"
+	"os/user"
 	"strconv"
 
 	"github.com/projectbluefin/chairlift/internal/autoupdate"
@@ -332,5 +333,112 @@ func GroupArgs(command, username, group string) (string, []string, bool) {
 		return "gpasswd", []string{"-d", username, group}, true
 	default:
 		return "", nil, false
+	}
+}
+
+// RefusalError indicates ChairLift refused to build or execute a command
+// because no target image exists for the running configuration.
+type RefusalError struct {
+	Message string
+}
+
+func (e *RefusalError) Error() string {
+	return e.Message
+}
+
+var detectImageInfo = imageinfo.Detect
+
+// SetDetectInfo replaces the image detection function for tests. It returns a cleanup function.
+func SetDetectInfo(fn func() (imageinfo.Info, error)) func() {
+	prev := detectImageInfo
+	detectImageInfo = fn
+	return func() { detectImageInfo = prev }
+}
+
+// ResolveRootCommand resolves the concrete root command the helper executes
+// for the given helper arguments. It returns RefusalError when the command
+// cannot be executed due to an unswitchable channel or unpublished driver image.
+func ResolveRootCommand(args []string) ([]string, error) {
+	inv, err := ParseInvocation(args)
+	if err != nil {
+		return nil, err
+	}
+
+	switch inv.Command {
+	case CommandChannelSwitch:
+		info, err := detectImageInfo()
+		if err != nil {
+			return nil, nil
+		}
+		sArgs, ok := SwitchArgs(info, inv.Channel)
+		if !ok {
+			return nil, &RefusalError{
+				Message: fmt.Sprintf("no %s image is defined for the running tag %q",
+					inv.Channel, info.EffectiveTag()),
+			}
+		}
+		return append([]string{"bootc"}, sArgs...), nil
+
+	case CommandDriverSwitch:
+		info, err := detectImageInfo()
+		if err != nil {
+			return nil, nil
+		}
+		dArgs, ok := DriverSwitchArgs(info, inv.Driver)
+		if !ok {
+			return nil, &RefusalError{
+				Message: fmt.Sprintf("no %s image is published for %s:%s",
+					inv.Driver, info.CleanRef(), info.EffectiveTag()),
+			}
+		}
+		return append([]string{"bootc"}, dArgs...), nil
+
+	case CommandRestart:
+		return append([]string{"systemctl"}, RestartArgs()...), nil
+
+	case CommandRollback:
+		return append([]string{"bootc"}, RollbackArgs()...), nil
+
+	case CommandFactoryReset:
+		return append([]string{"bootc"}, FactoryResetArgs()...), nil
+
+	case CommandAutoEnable:
+		steps, ok := AutoUpdateArgs(CommandAutoEnable)
+		if ok && len(steps) > 1 {
+			return append([]string{"systemctl"}, steps[1]...), nil
+		}
+		return nil, nil
+
+	case CommandAutoDisable:
+		steps, ok := AutoUpdateArgs(CommandAutoDisable)
+		if ok && len(steps) > 0 {
+			return append([]string{"systemctl"}, steps[0]...), nil
+		}
+		return nil, nil
+
+	case CommandDXEnable:
+		username := ""
+		if u, err := user.Current(); err == nil {
+			username = u.Username
+		}
+		name, gArgs, ok := GroupArgs(CommandDXEnable, username, DevGroups()[0])
+		if ok {
+			return append([]string{name}, gArgs...), nil
+		}
+		return nil, nil
+
+	case CommandDXDisable:
+		username := ""
+		if u, err := user.Current(); err == nil {
+			username = u.Username
+		}
+		name, gArgs, ok := GroupArgs(CommandDXDisable, username, DevGroups()[0])
+		if ok {
+			return append([]string{name}, gArgs...), nil
+		}
+		return nil, nil
+
+	default:
+		return nil, nil
 	}
 }

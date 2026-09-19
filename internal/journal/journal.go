@@ -49,6 +49,27 @@ const (
 	SuppressedRefused Suppression = "refused"
 )
 
+// Status records the outcome or lifecycle stage of a privileged action.
+type Status string
+
+const (
+	// StatusAttempt records that a live privileged action is being attempted
+	// (dispatched to PolicyKit / the privileged helper).
+	StatusAttempt Status = "attempt"
+	// StatusSuccess records that a live privileged action completed successfully.
+	StatusSuccess Status = "success"
+	// StatusFailure records that a privileged action failed with an error.
+	StatusFailure Status = "failure"
+	// StatusDenied records that PolicyKit denied or dismissed authentication.
+	StatusDenied Status = "denied"
+	// StatusTimeout records that the action timed out before completing.
+	StatusTimeout Status = "timeout"
+	// StatusRefused records that ChairLift declined to build or execute the command.
+	StatusRefused Status = "refused"
+	// StatusDryRun records a preview under --dry-run.
+	StatusDryRun Status = "dry-run"
+)
+
 // Entry is one journalled action.
 type Entry struct {
 	// Seq is a process-wide monotonic sequence number, assigned under the
@@ -58,14 +79,22 @@ type Entry struct {
 	Seq uint64 `json:"seq"`
 	// Action is the operation name, e.g. "channel-switch".
 	Action string `json:"action"`
+	// Status records whether the action was an attempt, dry-run preview,
+	// refusal, or its final execution outcome (success, denied, timeout, failure).
+	Status Status `json:"status,omitempty"`
 	// Args are the operation's inputs as ChairLift understood them.
 	Args map[string]string `json:"args,omitempty"`
 	// WouldRun is the argv a real run executes, verbatim. Keeping the built
 	// command rather than re-deriving it in a test is the whole point: the
 	// assertion then checks the command ChairLift actually assembled.
 	WouldRun []string `json:"would_run,omitempty"`
+	// RootCommand is the concrete privileged command selected inside the helper
+	// (e.g. `bootc switch --enforce-container-sigpolicy <target>`).
+	RootCommand []string `json:"root_command,omitempty"`
 	// Suppressed records whether the action ran.
 	Suppressed Suppression `json:"suppressed"`
+	// Error records the failure or refusal message, if any.
+	Error string `json:"error,omitempty"`
 	// Timestamp is RFC 3339 UTC, for human reading only.
 	Timestamp string `json:"ts"`
 }
@@ -96,11 +125,10 @@ func Enabled() bool {
 	return enabled.Load()
 }
 
-// Record appends one entry. It never returns an error and never panics: a
-// journal that cannot be written must not take down the operation it was
-// recording. A write failure is silently dropped, because the only caller
-// that could react to it is the one whose actual job is something else.
-func Record(action string, args map[string]string, wouldRun []string, suppressed Suppression) {
+// RecordEntry appends one entry directly, deriving default values for Seq,
+// Timestamp, Suppressed, or Status if they are omitted. It never returns an
+// error and never panics: a write failure is silently dropped.
+func RecordEntry(entry Entry) {
 	if !Enabled() {
 		return
 	}
@@ -109,13 +137,29 @@ func Record(action string, args map[string]string, wouldRun []string, suppressed
 	defer mu.Unlock()
 
 	seq++
-	entry := Entry{
-		Seq:        seq,
-		Action:     action,
-		Args:       args,
-		WouldRun:   wouldRun,
-		Suppressed: suppressed,
-		Timestamp:  now().Format(time.RFC3339),
+	entry.Seq = seq
+	if entry.Timestamp == "" {
+		entry.Timestamp = now().Format(time.RFC3339)
+	}
+	if entry.Suppressed == "" {
+		switch entry.Status {
+		case StatusDryRun:
+			entry.Suppressed = SuppressedDryRun
+		case StatusRefused:
+			entry.Suppressed = SuppressedRefused
+		default:
+			entry.Suppressed = SuppressedNone
+		}
+	}
+	if entry.Status == "" {
+		switch entry.Suppressed {
+		case SuppressedDryRun:
+			entry.Status = StatusDryRun
+		case SuppressedRefused:
+			entry.Status = StatusRefused
+		default:
+			entry.Status = StatusSuccess
+		}
 	}
 
 	line, err := json.Marshal(entry)
@@ -129,6 +173,17 @@ func Record(action string, args map[string]string, wouldRun []string, suppressed
 	}
 	defer func() { _ = file.Close() }()
 	_, _ = fmt.Fprintf(file, "%s\n", line)
+}
+
+// Record appends one entry using legacy arguments. It sets Status
+// based on suppressed.
+func Record(action string, args map[string]string, wouldRun []string, suppressed Suppression) {
+	RecordEntry(Entry{
+		Action:     action,
+		Args:       args,
+		WouldRun:   wouldRun,
+		Suppressed: suppressed,
+	})
 }
 
 // Reset reconfigures the journal from the environment and clears the

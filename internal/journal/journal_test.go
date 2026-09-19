@@ -178,3 +178,64 @@ func TestResetClearsTheSequenceCounter(t *testing.T) {
 		t.Fatalf("after Reset, sequence did not restart: %+v", entries)
 	}
 }
+
+func TestRecordEntrySerializesStatusRootCommandAndError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.jsonl")
+	withSink(t, path)
+
+	RecordEntry(Entry{
+		Action:      "channel-switch",
+		Status:      StatusAttempt,
+		Args:        map[string]string{"channel": "testing"},
+		WouldRun:    []string{"pkexec", "/usr/bin/chairlift-ublue-helper", "channel-switch", "testing"},
+		RootCommand: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/ublue-os/bluefin:testing"},
+		Suppressed:  SuppressedNone,
+	})
+
+	RecordEntry(Entry{
+		Action:      "channel-switch",
+		Status:      StatusDenied,
+		Args:        map[string]string{"channel": "testing"},
+		WouldRun:    []string{"pkexec", "/usr/bin/chairlift-ublue-helper", "channel-switch", "testing"},
+		RootCommand: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/ublue-os/bluefin:testing"},
+		Suppressed:  SuppressedNone,
+		Error:       "command failed (exit 126): authorization denied",
+	})
+
+	RecordEntry(Entry{
+		Action:     "channel-switch",
+		Status:     StatusRefused,
+		Args:       map[string]string{"channel": "testing"},
+		Suppressed: SuppressedRefused,
+		Error:      "no testing image is defined for the running tag \"stable\"",
+	})
+
+	entries := readEntries(t, path)
+	if len(entries) != 3 {
+		t.Fatalf("journal has %d entries, want 3", len(entries))
+	}
+
+	attempt := entries[0]
+	if attempt.Status != StatusAttempt {
+		t.Errorf("attempt status = %q, want %q", attempt.Status, StatusAttempt)
+	}
+	if len(attempt.RootCommand) != 4 || attempt.RootCommand[0] != "bootc" {
+		t.Errorf("attempt root command = %v, want bootc switch argv", attempt.RootCommand)
+	}
+
+	denied := entries[1]
+	if denied.Status != StatusDenied {
+		t.Errorf("denied status = %q, want %q", denied.Status, StatusDenied)
+	}
+	if denied.Error != "command failed (exit 126): authorization denied" {
+		t.Errorf("denied error = %q", denied.Error)
+	}
+
+	refused := entries[2]
+	if refused.Status != StatusRefused {
+		t.Errorf("refused status = %q, want %q", refused.Status, StatusRefused)
+	}
+	if refused.Suppressed != SuppressedRefused {
+		t.Errorf("refused suppressed = %q, want %q", refused.Suppressed, SuppressedRefused)
+	}
+}

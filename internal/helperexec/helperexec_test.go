@@ -312,34 +312,31 @@ func TestRunJournalsTimeout(t *testing.T) {
 	}
 }
 
-func TestRunJournalsRefusalWithoutInvokingPkexec(t *testing.T) {
+func TestRunJournalsHelperRefusalOutcome(t *testing.T) {
 	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
 	t.Setenv(journal.PathEnv, journalPath)
 	journal.Reset()
 	t.Cleanup(journal.Reset)
 
-	// Host descriptor has no testing counterpart
-	info := imageinfo.Info{Name: "bluefin", Tag: "stable", Ref: "docker://ghcr.io/ublue-os/bluefin"}
-	restore := ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
-	t.Cleanup(restore)
-
-	neverExecPkexec := filepath.Join(t.TempDir(), "pkexec-never-run")
-
-	helperPath := "/usr/bin/chairlift-ublue-helper"
-	_, _, err := Run(context.Background(), neverExecPkexec, helperPath, "channel-switch", "testing")
-	if err == nil {
-		t.Fatal("Run error = nil, want refusal error")
+	refusingScript := filepath.Join(t.TempDir(), "refusing-pkexec")
+	if err := os.WriteFile(refusingScript, []byte("#!/bin/sh\necho 'no testing image is defined for the running tag \"stable\"' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("writing refusing pkexec: %v", err)
 	}
 
-	if _, statErr := os.Stat(neverExecPkexec); statErr == nil {
-		t.Error("pkexec was executed despite refusal")
+	helperPath := "/usr/bin/chairlift-ublue-helper"
+	_, _, err := Run(context.Background(), refusingScript, helperPath, "channel-switch", "testing")
+	if err == nil {
+		t.Fatal("Run error = nil, want refusal error from helper")
 	}
 
 	entries := readJournal(t, journalPath)
-	if len(entries) != 1 {
-		t.Fatalf("journal has %d entries, want 1", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("journal has %d entries, want 2", len(entries))
 	}
-	refused := entries[0]
+	if entries[0].Status != journal.StatusAttempt {
+		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
+	}
+	refused := entries[1]
 	if refused.Status != journal.StatusRefused {
 		t.Errorf("refused status = %q, want %q", refused.Status, journal.StatusRefused)
 	}

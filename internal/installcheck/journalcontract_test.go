@@ -253,7 +253,7 @@ func containsExecCall(fn *ast.FuncDecl) bool {
 }
 
 func callsJournalRecord(fn *ast.FuncDecl) bool {
-	return referencesSelector(fn, "journal", "Record")
+	return referencesSelector(fn, "journal", "Record") || referencesSelector(fn, "journal", "RecordEntry")
 }
 
 // referencesSelector reports whether fn's body contains pkg.name anywhere,

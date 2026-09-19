@@ -80,18 +80,7 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 		action = args[0]
 	}
 
-	rootCmd, resErr := resolveRootCommand(helperPath, args)
-	var refusalErr *ubluehelper.RefusalError
-	if errors.As(resErr, &refusalErr) {
-		journal.RecordEntry(journal.Entry{
-			Action:     action,
-			Status:     journal.StatusRefused,
-			Args:       journalArgs(args),
-			Suppressed: journal.SuppressedRefused,
-			Error:      refusalErr.Error(),
-		})
-		return "", "", &Error{Message: refusalErr.Error()}
-	}
+	rootCmd, _ := resolveRootCommand(helperPath, args)
 
 	if dryrun.Enabled() {
 		// Journal Args must reflect the caller's actual inputs, so build the
@@ -115,7 +104,6 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 	wouldRun := append([]string{pkexecPath}, fullArgs...)
 
 	// Record attempt before dispatch
-	_ = journal.Record // retain reference for AST contract check
 	journal.RecordEntry(journal.Entry{
 		Action:      action,
 		Status:      journal.StatusAttempt,
@@ -140,6 +128,7 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 	if err != nil {
 		var classifiedErr error
 		status := journal.StatusFailure
+		suppressed := journal.SuppressedNone
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = journal.StatusTimeout
 			classifiedErr = &Error{Message: "command timed out"}
@@ -147,6 +136,9 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) && exitErr.ExitCode() == 126 {
 				status = journal.StatusDenied
+			} else if strings.Contains(stderr.String(), "no ") && (strings.Contains(stderr.String(), "image is defined") || strings.Contains(stderr.String(), "image is published")) {
+				status = journal.StatusRefused
+				suppressed = journal.SuppressedRefused
 			}
 			classifiedErr = classifyFailure(err, helperPath, stderr.String())
 		}
@@ -156,7 +148,7 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 			Args:        journalArgs(args),
 			WouldRun:    wouldRun,
 			RootCommand: rootCmd,
-			Suppressed:  journal.SuppressedNone,
+			Suppressed:  suppressed,
 			Error:       classifiedErr.Error(),
 		})
 		return "", stderr.String(), classifiedErr

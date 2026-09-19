@@ -142,3 +142,95 @@ func TestWorkflowUsesLeastPrivilege(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseWorkflowGatedOnRequiredChecks(t *testing.T) {
+	path := filepath.Join(".github", "workflows", "release.yml")
+	workflow := readRepoFile(t, path)
+
+	var config struct {
+		Permissions *map[string]string `yaml:"permissions"`
+		Jobs        map[string]struct {
+			Needs       any               `yaml:"needs"`
+			Permissions map[string]string `yaml:"permissions"`
+			Steps       []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(workflow), &config); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	if config.Permissions == nil || len(*config.Permissions) != 0 {
+		t.Errorf("top-level permissions = %v, want explicit empty permissions", config.Permissions)
+	}
+
+	gateJob, ok := config.Jobs["gate"]
+	if !ok {
+		t.Fatal("release.yml must define a 'gate' job")
+	}
+	if len(gateJob.Permissions) != 1 || gateJob.Permissions["contents"] != "read" {
+		t.Errorf("gate job permissions = %v, want contents: read", gateJob.Permissions)
+	}
+	gateRunsMakeCI := false
+	for _, step := range gateJob.Steps {
+		if strings.Contains(step.Run, "make ci") {
+			gateRunsMakeCI = true
+			break
+		}
+	}
+	if !gateRunsMakeCI {
+		t.Errorf("gate job steps must execute 'make ci'")
+	}
+
+	e2eJob, ok := config.Jobs["e2e"]
+	if !ok {
+		t.Fatal("release.yml must define an 'e2e' job")
+	}
+	if len(e2eJob.Permissions) != 1 || e2eJob.Permissions["contents"] != "read" {
+		t.Errorf("e2e job permissions = %v, want contents: read", e2eJob.Permissions)
+	}
+	e2eRunsMakeE2E := false
+	for _, step := range e2eJob.Steps {
+		if strings.Contains(step.Run, "make e2e") {
+			e2eRunsMakeE2E = true
+			break
+		}
+	}
+	if !e2eRunsMakeE2E {
+		t.Errorf("e2e job steps must execute 'make e2e'")
+	}
+
+	goreleaserJob, ok := config.Jobs["goreleaser"]
+	if !ok {
+		t.Fatal("release.yml must define a 'goreleaser' job")
+	}
+	if len(goreleaserJob.Permissions) != 1 || goreleaserJob.Permissions["contents"] != "write" {
+		t.Errorf("goreleaser job permissions = %v, want contents: write", goreleaserJob.Permissions)
+	}
+
+	var needsList []string
+	switch v := goreleaserJob.Needs.(type) {
+	case string:
+		needsList = []string{v}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				needsList = append(needsList, s)
+			}
+		}
+	}
+	hasGate := false
+	hasE2E := false
+	for _, n := range needsList {
+		if n == "gate" {
+			hasGate = true
+		}
+		if n == "e2e" {
+			hasE2E = true
+		}
+	}
+	if !hasGate || !hasE2E {
+		t.Errorf("goreleaser job needs = %v, want [gate, e2e]", needsList)
+	}
+}

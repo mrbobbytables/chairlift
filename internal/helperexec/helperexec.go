@@ -20,6 +20,11 @@
 // pkexecPath is a parameter, always "pkexec" in production, so tests can
 // substitute a fake pkexec stand-in without invoking the real pkexec/polkit
 // stack or requiring root.
+//
+// Helper-specific knowledge lives outside this package: a helper's owning
+// package registers a RootCommandResolver for its basename (see
+// RegisterRootCommandResolver), so helperexec stays the helper-agnostic
+// invocation contract its taxonomy claims to be.
 package helperexec
 
 import (
@@ -31,10 +36,10 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/projectbluefin/chairlift/internal/dryrun"
 	"github.com/projectbluefin/chairlift/internal/journal"
-	"github.com/projectbluefin/chairlift/internal/ubluehelper"
 )
 
 // Error represents a privileged helper invocation failure.
@@ -55,6 +60,48 @@ func (e *NotFoundError) Error() string {
 	return e.Message
 }
 
+// RefusalError is returned by a RootCommandResolver when ChairLift declines
+// to build a privileged command at all — an unswitchable channel, an
+// unpublished driver image. Run treats it as a refusal: nothing is
+// dispatched to pkexec, and the journal records status "refused" with
+// suppression "refused", the one state that truthfully means no root process
+// ever started.
+type RefusalError struct {
+	Message string
+}
+
+func (e *RefusalError) Error() string {
+	return e.Message
+}
+
+// RootCommandResolver predicts the concrete privileged command a helper will
+// run for args, for the journal's root_command field. It returns a
+// *RefusalError when ChairLift declines to build a command at all, and
+// (nil, nil) when the command cannot be predicted from the unprivileged
+// process — an unpredictable command is journalled without root_command
+// rather than blocking the invocation.
+type RootCommandResolver func(args []string) ([]string, error)
+
+var (
+	resolversMu sync.RWMutex
+	resolvers   = map[string]RootCommandResolver{}
+)
+
+// RegisterRootCommandResolver registers resolver for the helper binary whose
+// basename is helperBase. A helper's owning package calls it from init, so
+// helperexec never has to know which helpers exist or what they run. Passing
+// a nil resolver removes the registration.
+func RegisterRootCommandResolver(helperBase string, resolver RootCommandResolver) {
+	resolversMu.Lock()
+	defer resolversMu.Unlock()
+
+	if resolver == nil {
+		delete(resolvers, helperBase)
+		return
+	}
+	resolvers[helperBase] = resolver
+}
+
 // journalArgs turns a privileged helper's argv (minus the leading command
 // word, which becomes journal.Entry.Action) into the journal's args map.
 func journalArgs(args []string) map[string]string {
@@ -65,22 +112,32 @@ func journalArgs(args []string) map[string]string {
 }
 
 func resolveRootCommand(helperPath string, args []string) ([]string, error) {
-	if path.Base(helperPath) == "chairlift-ublue-helper" {
-		return ubluehelper.ResolveRootCommand(args)
+	resolversMu.RLock()
+	resolver := resolvers[path.Base(helperPath)]
+	resolversMu.RUnlock()
+
+	if resolver == nil {
+		return nil, nil
 	}
-	return nil, nil
+	return resolver(args)
 }
 
 // Run executes helperPath via pkexecPath with args, honoring the global
 // dry-run switch and journaling every invocation. It returns the helper's
 // stdout and stderr alongside any classified error.
+//
+// A live invocation whose registered RootCommandResolver refuses is recorded
+// as a refusal and returns without dispatching to pkexec, so the journal's
+// suppression states stay truthful: "refused" means no root process started,
+// and any entry written after dispatch keeps suppression "no" even when the
+// helper itself declines, because pkexec did run as root.
 func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (string, string, error) {
 	action := ""
 	if len(args) > 0 {
 		action = args[0]
 	}
 
-	rootCmd, _ := resolveRootCommand(helperPath, args)
+	rootCmd, resolveErr := resolveRootCommand(helperPath, args)
 
 	if dryrun.Enabled() {
 		// Journal Args must reflect the caller's actual inputs, so build the
@@ -102,6 +159,20 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 
 	fullArgs := append([]string{helperPath}, args...)
 	wouldRun := append([]string{pkexecPath}, fullArgs...)
+
+	var refusal *RefusalError
+	if errors.As(resolveErr, &refusal) {
+		journal.RecordEntry(journal.Entry{
+			Action:     action,
+			Status:     journal.StatusRefused,
+			Args:       journalArgs(args),
+			WouldRun:   wouldRun,
+			Suppressed: journal.SuppressedRefused,
+			Error:      refusal.Message,
+		})
+		log.Printf("refusing %s %s: %s", path.Base(helperPath), action, refusal.Message)
+		return "", refusal.Message, &Error{Message: refusal.Message}
+	}
 
 	// Record attempt before dispatch
 	journal.RecordEntry(journal.Entry{
@@ -128,7 +199,6 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 	if err != nil {
 		var classifiedErr error
 		status := journal.StatusFailure
-		suppressed := journal.SuppressedNone
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = journal.StatusTimeout
 			classifiedErr = &Error{Message: "command timed out"}
@@ -136,19 +206,19 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) && exitErr.ExitCode() == 126 {
 				status = journal.StatusDenied
-			} else if strings.Contains(stderr.String(), "no ") && (strings.Contains(stderr.String(), "image is defined") || strings.Contains(stderr.String(), "image is published")) {
-				status = journal.StatusRefused
-				suppressed = journal.SuppressedRefused
 			}
 			classifiedErr = classifyFailure(err, helperPath, stderr.String())
 		}
+		// Suppression stays SuppressedNone for every post-dispatch outcome:
+		// pkexec was spawned, so the audit trail must not claim otherwise,
+		// however the helper's own stderr reads.
 		journal.RecordEntry(journal.Entry{
 			Action:      action,
 			Status:      status,
 			Args:        journalArgs(args),
 			WouldRun:    wouldRun,
 			RootCommand: rootCmd,
-			Suppressed:  suppressed,
+			Suppressed:  journal.SuppressedNone,
 			Error:       classifiedErr.Error(),
 		})
 		return "", stderr.String(), classifiedErr

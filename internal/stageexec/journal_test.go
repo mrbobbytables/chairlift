@@ -20,21 +20,74 @@ import (
 // system showed helper actions and a silent gap where the OS update went.
 // These tests pin both halves of the fix.
 
+// A live staging run writes two entries: the attempt recorded before
+// dispatch and its outcome. Without the second entry a completed staging run
+// and one that died mid-flight are indistinguishable in the audit trail.
 func TestStageJournalsLiveInvocation(t *testing.T) {
 	entries := stageWithJournal(t, t.TempDir(), false)
 
-	if len(entries) != 1 {
-		t.Fatalf("journal has %d entries, want 1", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("journal has %d entries, want 2 (attempt and outcome)", len(entries))
 	}
 	entry := entries[0]
 	if entry.Action != "stage-script.sh" {
 		t.Errorf("journalled action = %q, want the script's base name %q", entry.Action, "stage-script.sh")
+	}
+	if entry.Status != journal.StatusAttempt {
+		t.Errorf("attempt status = %q, want %q", entry.Status, journal.StatusAttempt)
 	}
 	if entry.Suppressed != journal.SuppressedNone {
 		t.Errorf("journalled suppressed = %q, want %q", entry.Suppressed, journal.SuppressedNone)
 	}
 	if len(entry.Args) != 0 {
 		t.Errorf("journalled args = %v, want none: the stage scripts take no arguments", entry.Args)
+	}
+
+	outcome := entries[1]
+	if outcome.Status != journal.StatusSuccess {
+		t.Errorf("outcome status = %q, want %q", outcome.Status, journal.StatusSuccess)
+	}
+	if outcome.Suppressed != journal.SuppressedNone {
+		t.Errorf("outcome suppressed = %q, want %q", outcome.Suppressed, journal.SuppressedNone)
+	}
+	if !reflect.DeepEqual(outcome.WouldRun, entry.WouldRun) {
+		t.Errorf("outcome WouldRun = %v, want the attempt's %v", outcome.WouldRun, entry.WouldRun)
+	}
+}
+
+// A failed staging run must leave a failure outcome carrying the error, not
+// an attempt entry that reads as an action still in flight.
+func TestStageJournalsLiveFailureOutcome(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "failing-stage-script.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatalf("writing stage script: %v", err)
+	}
+
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	progressCh := make(chan ProgressEvent, 8)
+	done := make(chan error, 1)
+	go func() { done <- Stage(context.Background(), progressCh, "/bin/sh", script) }()
+	for range progressCh { //nolint:revive // drain so Stage can finish
+	}
+	if err := <-done; err == nil {
+		t.Fatal("Stage error = nil, want failure from exit 3")
+	}
+
+	entries := readStageJournal(t, journalPath)
+	if len(entries) != 2 {
+		t.Fatalf("journal has %d entries, want 2 (attempt and outcome)", len(entries))
+	}
+	outcome := entries[1]
+	if outcome.Status != journal.StatusFailure {
+		t.Errorf("outcome status = %q, want %q", outcome.Status, journal.StatusFailure)
+	}
+	if outcome.Error == "" {
+		t.Error("outcome error is empty, want the staging failure message")
 	}
 }
 

@@ -700,31 +700,31 @@ func TestRunHelperJournalsTimeout(t *testing.T) {
 	}
 }
 
+// A refusal is resolved before dispatch, so the journal's "refused"
+// suppression keeps its meaning: pkexec is never spawned, no authentication
+// is requested, and no root process runs.
 func TestRunHelperJournalsRefusalForUnswitchableChannel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.jsonl")
 	t.Setenv(journal.PathEnv, path)
 	journal.Reset()
 	t.Cleanup(journal.Reset)
 
-	refusingPkexec := filepath.Join(t.TempDir(), "refusing-pkexec")
-	script := "#!/bin/sh\necho 'no testing image is defined for the running tag \"stable\"' >&2\nexit 1\n"
-	if err := os.WriteFile(refusingPkexec, []byte(script), 0o755); err != nil {
-		t.Fatalf("writing refusing pkexec: %v", err)
-	}
+	// Pinned build: no testing counterpart exists for the running tag.
+	info := imageinfo.Info{Name: "dakota", Tag: "20260817", Ref: "docker://ghcr.io/projectbluefin/dakota"}
+	t.Cleanup(ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil }))
 
-	_, _, err := runHelper(context.Background(), refusingPkexec, ubluehelper.CommandChannelSwitch, "testing")
+	neverRunPkexec := filepath.Join(t.TempDir(), "pkexec-should-never-run")
+
+	_, _, err := runHelper(context.Background(), neverRunPkexec, ubluehelper.CommandChannelSwitch, "testing")
 	if err == nil {
 		t.Fatal("runHelper error = nil, want refusal error")
 	}
 
 	entries := readJournal(t, path)
-	if len(entries) != 2 {
-		t.Fatalf("journal has %d entries, want 2 (attempt and refusal)", len(entries))
+	if len(entries) != 1 {
+		t.Fatalf("journal has %d entries, want 1 (refusal only, nothing dispatched)", len(entries))
 	}
-	if entries[0].Status != journal.StatusAttempt {
-		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
-	}
-	refused := entries[1]
+	refused := entries[0]
 	if refused.Status != journal.StatusRefused {
 		t.Errorf("status = %q, want %q", refused.Status, journal.StatusRefused)
 	}
@@ -742,25 +742,22 @@ func TestRunHelperJournalsRefusalForUnpublishedDriver(t *testing.T) {
 	journal.Reset()
 	t.Cleanup(journal.Reset)
 
-	refusingPkexec := filepath.Join(t.TempDir(), "refusing-pkexec")
-	script := "#!/bin/sh\necho 'no nvidia image is published for ghcr.io/ublue-os/bluefin:lts' >&2\nexit 1\n"
-	if err := os.WriteFile(refusingPkexec, []byte(script), 0o755); err != nil {
-		t.Fatalf("writing refusing pkexec: %v", err)
-	}
+	// LTS host asking for an NVIDIA image that is not published for it.
+	info := imageinfo.Info{Name: "bluefin", Tag: "lts", Ref: "docker://ghcr.io/ublue-os/bluefin"}
+	t.Cleanup(ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil }))
 
-	_, _, err := runHelper(context.Background(), refusingPkexec, ubluehelper.CommandDriverSwitch, "nvidia")
+	neverRunPkexec := filepath.Join(t.TempDir(), "pkexec-should-never-run")
+
+	_, _, err := runHelper(context.Background(), neverRunPkexec, ubluehelper.CommandDriverSwitch, "nvidia")
 	if err == nil {
 		t.Fatal("runHelper error = nil, want refusal error")
 	}
 
 	entries := readJournal(t, path)
-	if len(entries) != 2 {
-		t.Fatalf("journal has %d entries, want 2 (attempt and refusal)", len(entries))
+	if len(entries) != 1 {
+		t.Fatalf("journal has %d entries, want 1 (refusal only, nothing dispatched)", len(entries))
 	}
-	if entries[0].Status != journal.StatusAttempt {
-		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
-	}
-	refused := entries[1]
+	refused := entries[0]
 	if refused.Status != journal.StatusRefused {
 		t.Errorf("status = %q, want %q", refused.Status, journal.StatusRefused)
 	}

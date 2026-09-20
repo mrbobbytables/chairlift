@@ -14,10 +14,18 @@ import (
 	"time"
 
 	"github.com/projectbluefin/chairlift/internal/dryrun"
-	"github.com/projectbluefin/chairlift/internal/imageinfo"
 	"github.com/projectbluefin/chairlift/internal/journal"
-	"github.com/projectbluefin/chairlift/internal/ubluehelper"
 )
+
+// registerResolver installs a root-command resolver for helperBase for the
+// duration of the test. helperexec knows nothing about any specific helper,
+// so its tests supply the resolver the owning package would register in
+// production rather than reaching into internal/ubluehelper.
+func registerResolver(t *testing.T, helperBase string, resolver RootCommandResolver) {
+	t.Helper()
+	RegisterRootCommandResolver(helperBase, resolver)
+	t.Cleanup(func() { RegisterRootCommandResolver(helperBase, nil) })
+}
 
 // writeFakePkexec writes an executable shell script standing in for pkexec:
 // it records its own argv (one element per line) to capturedArgsFile and
@@ -182,11 +190,10 @@ func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
 	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
 	fakePkexec := writeFakePkexec(t, capturedArgsFile)
 
-	info := imageinfo.Info{Name: "dakota", Tag: "latest", Ref: "docker://ghcr.io/projectbluefin/dakota"}
-	restore := ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
-	t.Cleanup(restore)
+	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
+	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
 
-	helperPath := "/usr/bin/chairlift-ublue-helper"
+	helperPath := "/usr/bin/chairlift-example-helper"
 	if _, _, err := Run(context.Background(), fakePkexec, helperPath, "channel-switch", "testing"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -196,7 +203,6 @@ func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
 		t.Fatalf("journal has %d entries, want 2", len(entries))
 	}
 
-	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
 	wantWouldRun := []string{fakePkexec, helperPath, "channel-switch", "testing"}
 
 	attempt := entries[0]
@@ -236,11 +242,10 @@ func TestRunJournalsPolicyKitDenied(t *testing.T) {
 		t.Fatalf("writing denied pkexec: %v", err)
 	}
 
-	info := imageinfo.Info{Name: "dakota", Tag: "latest", Ref: "docker://ghcr.io/projectbluefin/dakota"}
-	restore := ubluehelper.SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
-	t.Cleanup(restore)
+	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
+	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
 
-	helperPath := "/usr/bin/chairlift-ublue-helper"
+	helperPath := "/usr/bin/chairlift-example-helper"
 	_, _, err := Run(context.Background(), deniedScript, helperPath, "channel-switch", "testing")
 	if err == nil {
 		t.Fatal("Run error = nil, want error for exit 126")
@@ -265,7 +270,6 @@ func TestRunJournalsPolicyKitDenied(t *testing.T) {
 	if !strings.Contains(denied.Error, "126") {
 		t.Errorf("entry 1 error = %q, want exit 126", denied.Error)
 	}
-	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
 	if !reflect.DeepEqual(denied.RootCommand, wantRootCmd) {
 		t.Errorf("entry 1 RootCommand = %v, want %v", denied.RootCommand, wantRootCmd)
 	}
@@ -285,7 +289,10 @@ func TestRunJournalsTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
-	helperPath := "/usr/bin/chairlift-ublue-helper"
+	wantRootCmd := []string{"systemctl", "reboot"}
+	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
+
+	helperPath := "/usr/bin/chairlift-example-helper"
 	_, _, err := Run(ctx, hangingScript, helperPath, "restart")
 	if err == nil {
 		t.Fatal("Run error = nil, want timeout")
@@ -306,13 +313,16 @@ func TestRunJournalsTimeout(t *testing.T) {
 	if timeoutEntry.Error != "command timed out" {
 		t.Errorf("entry 1 error = %q, want command timed out", timeoutEntry.Error)
 	}
-	wantRootCmd := []string{"systemctl", "reboot"}
 	if !reflect.DeepEqual(timeoutEntry.RootCommand, wantRootCmd) {
 		t.Errorf("entry 1 RootCommand = %v, want %v", timeoutEntry.RootCommand, wantRootCmd)
 	}
 }
 
-func TestRunJournalsHelperRefusalOutcome(t *testing.T) {
+// A helper that refuses after pkexec has been spawned is not a suppressed
+// action: a root process ran. The entry must therefore stay suppression "no"
+// — the audit trail cannot claim nothing happened just because the helper's
+// stderr reads like a refusal.
+func TestRunJournalsPostDispatchHelperRefusalAsExecutedFailure(t *testing.T) {
 	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
 	t.Setenv(journal.PathEnv, journalPath)
 	journal.Reset()
@@ -323,7 +333,7 @@ func TestRunJournalsHelperRefusalOutcome(t *testing.T) {
 		t.Fatalf("writing refusing pkexec: %v", err)
 	}
 
-	helperPath := "/usr/bin/chairlift-ublue-helper"
+	helperPath := "/usr/bin/chairlift-example-helper"
 	_, _, err := Run(context.Background(), refusingScript, helperPath, "channel-switch", "testing")
 	if err == nil {
 		t.Fatal("Run error = nil, want refusal error from helper")
@@ -336,12 +346,64 @@ func TestRunJournalsHelperRefusalOutcome(t *testing.T) {
 	if entries[0].Status != journal.StatusAttempt {
 		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
 	}
-	refused := entries[1]
+	outcome := entries[1]
+	if outcome.Status != journal.StatusFailure {
+		t.Errorf("outcome status = %q, want %q", outcome.Status, journal.StatusFailure)
+	}
+	if outcome.Suppressed != journal.SuppressedNone {
+		t.Errorf("outcome suppressed = %q, want %q: pkexec was dispatched", outcome.Suppressed, journal.SuppressedNone)
+	}
+	if !strings.Contains(outcome.Error, "no testing image is defined") {
+		t.Errorf("outcome error = %q, want the helper's explanation", outcome.Error)
+	}
+}
+
+// A resolver refusal is the only refusal the journal calls suppressed,
+// because it is the only one where nothing is dispatched: no pkexec, no
+// authentication prompt, no root process.
+func TestRunRefusesBeforeDispatch(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	dryrun.Set(false)
+
+	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
+	fakePkexec := writeFakePkexec(t, capturedArgsFile)
+
+	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) {
+		return nil, &RefusalError{Message: `no testing image is defined for the running tag "20260817"`}
+	})
+
+	helperPath := "/usr/bin/chairlift-example-helper"
+	_, stderr, err := Run(context.Background(), fakePkexec, helperPath, "channel-switch", "testing")
+	if err == nil {
+		t.Fatal("Run error = nil, want refusal error")
+	}
+	if !strings.Contains(err.Error(), "no testing image is defined") {
+		t.Errorf("Run error = %q, want the refusal explanation", err.Error())
+	}
+	if !strings.Contains(stderr, "no testing image is defined") {
+		t.Errorf("Run stderr = %q, want the refusal explanation", stderr)
+	}
+	if _, statErr := os.Stat(capturedArgsFile); statErr == nil {
+		t.Fatal("pkexec was dispatched for a refused action; a refusal must never reach pkexec")
+	}
+
+	entries := readJournal(t, journalPath)
+	if len(entries) != 1 {
+		t.Fatalf("journal has %d entries, want 1 (refusal only, no attempt)", len(entries))
+	}
+	refused := entries[0]
 	if refused.Status != journal.StatusRefused {
 		t.Errorf("refused status = %q, want %q", refused.Status, journal.StatusRefused)
 	}
 	if refused.Suppressed != journal.SuppressedRefused {
 		t.Errorf("refused suppressed = %q, want %q", refused.Suppressed, journal.SuppressedRefused)
+	}
+	if len(refused.RootCommand) != 0 {
+		t.Errorf("refused RootCommand = %v, want none: no command was built", refused.RootCommand)
 	}
 	if !strings.Contains(refused.Error, "no testing image is defined") {
 		t.Errorf("refused error = %q, want explanation", refused.Error)

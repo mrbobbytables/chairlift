@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os/user"
 	"strconv"
+	"sync"
 
 	"github.com/projectbluefin/chairlift/internal/autoupdate"
 	"github.com/projectbluefin/chairlift/internal/imageinfo"
@@ -346,18 +347,50 @@ func (e *RefusalError) Error() string {
 	return e.Message
 }
 
-var detectImageInfo = imageinfo.Detect
+var (
+	detectMu        sync.RWMutex
+	detectImageInfo = imageinfo.Detect
+)
 
-// SetDetectInfo replaces the image detection function for tests. It returns a cleanup function.
+// SetDetectInfo replaces the image detection ResolveRootCommand consults and
+// returns a cleanup function restoring the previous one.
+//
+// Tests use it to resolve against a fixed descriptor, and
+// internal/ublue.SetDescriptorOverride uses it in dry-run mode so the
+// walkthrough's spoofed descriptor and the resolved root command agree. It
+// is therefore guarded: the value can be replaced while another goroutine is
+// resolving. It carries no privilege of its own — the root helper resolves
+// its own descriptor from imageinfo.DescriptorPath and never consults this.
 func SetDetectInfo(fn func() (imageinfo.Info, error)) func() {
+	detectMu.Lock()
+	defer detectMu.Unlock()
+
 	prev := detectImageInfo
 	detectImageInfo = fn
-	return func() { detectImageInfo = prev }
+	return func() {
+		detectMu.Lock()
+		defer detectMu.Unlock()
+		detectImageInfo = prev
+	}
 }
 
-// ResolveRootCommand resolves the concrete root command the helper executes
-// for the given helper arguments. It returns RefusalError when the command
-// cannot be executed due to an unswitchable channel or unpublished driver image.
+func detectInfo() (imageinfo.Info, error) {
+	detectMu.RLock()
+	fn := detectImageInfo
+	detectMu.RUnlock()
+
+	return fn()
+}
+
+// ResolveRootCommand resolves the concrete root command the helper is
+// expected to execute for the given helper arguments. It returns
+// *RefusalError when the command cannot be executed due to an unswitchable
+// channel or unpublished driver image.
+//
+// It runs in the unprivileged process, so its answer is a prediction of the
+// helper's own resolution, not a report of it: the two agree because both
+// derive the command from the same image descriptor and root-owned channel
+// tables, but only the helper's resolution is authoritative.
 func ResolveRootCommand(args []string) ([]string, error) {
 	inv, err := ParseInvocation(args)
 	if err != nil {
@@ -366,7 +399,7 @@ func ResolveRootCommand(args []string) ([]string, error) {
 
 	switch inv.Command {
 	case CommandChannelSwitch:
-		info, err := detectImageInfo()
+		info, err := detectInfo()
 		if err != nil {
 			return nil, nil
 		}
@@ -380,7 +413,7 @@ func ResolveRootCommand(args []string) ([]string, error) {
 		return append([]string{"bootc"}, sArgs...), nil
 
 	case CommandDriverSwitch:
-		info, err := detectImageInfo()
+		info, err := detectInfo()
 		if err != nil {
 			return nil, nil
 		}

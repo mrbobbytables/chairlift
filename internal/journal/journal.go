@@ -43,9 +43,12 @@ const (
 	// reached pkexec.
 	SuppressedDryRun Suppression = "dry-run"
 	// SuppressedRefused means ChairLift declined to build a command at all —
-	// an unswitchable channel, an unpublished driver image. This is the case
-	// a test most wants to see, because "nothing happened" and "the wrong
-	// thing was almost attempted" look identical from outside.
+	// an unswitchable channel, an unpublished driver image — and therefore
+	// never dispatched to pkexec. This is the case a test most wants to see,
+	// because "nothing happened" and "the wrong thing was almost attempted"
+	// look identical from outside. It is never used for a failure observed
+	// after dispatch, even one where the helper itself refused: once pkexec
+	// has been spawned a root process ran, and the audit trail must say so.
 	SuppressedRefused Suppression = "refused"
 )
 
@@ -88,8 +91,15 @@ type Entry struct {
 	// command rather than re-deriving it in a test is the whole point: the
 	// assertion then checks the command ChairLift actually assembled.
 	WouldRun []string `json:"would_run,omitempty"`
-	// RootCommand is the expected concrete privileged command resolved for
-	// the helper action (e.g. `bootc switch --enforce-container-sigpolicy <target>`).
+	// RootCommand is the concrete privileged command ChairLift expects the
+	// helper to run (e.g. `bootc switch --enforce-container-sigpolicy
+	// <target>`).
+	//
+	// It is resolved in the unprivileged process from the same image
+	// descriptor and root-owned channel tables the helper reads, so it is a
+	// prediction of the helper's own resolution rather than a report of it.
+	// The two agree unless the descriptor changes between resolution and
+	// dispatch; only the root helper's resolution is authoritative.
 	RootCommand []string `json:"root_command,omitempty"`
 	// Suppressed records whether the action ran.
 	Suppressed Suppression `json:"suppressed"`
@@ -175,8 +185,11 @@ func RecordEntry(entry Entry) {
 	_, _ = fmt.Fprintf(file, "%s\n", line)
 }
 
-// Record appends one entry using legacy arguments. It sets Status
-// based on suppressed.
+// Record appends one entry using legacy arguments. It derives Status from
+// suppressed, so it can only express a lifecycle stage, never an outcome: a
+// live (SuppressedNone) entry is recorded as StatusAttempt. Callers that
+// execute a privileged action must use RecordEntry and record the outcome
+// entry themselves, otherwise their action reads as one that died in flight.
 func Record(action string, args map[string]string, wouldRun []string, suppressed Suppression) {
 	RecordEntry(Entry{
 		Action:     action,

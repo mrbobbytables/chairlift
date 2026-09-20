@@ -1164,13 +1164,46 @@ argument crossing the boundary is another value the caller would control.
 
 ### Action journal and desktop notifications
 
-`internal/journal` is a port of finupdate's `action_journal.rs`: one JSON
-line per privileged action, appended when `$CHAIRLIFT_ACTION_JOURNAL` is set,
-a no-op otherwise. A dry-run invocation is recorded with
-`Suppressed: SuppressedDryRun` and the argv that would have run, which is
-what lets a test assert intent ("clicking Switch would have run
-`bootc switch ghcr.io/…/dakota:testing`") without granting privilege; see
-`internal/ublue`'s `TestRunHelperJournalsEveryInvocation`.
+`internal/journal` is a port of finupdate's `action_journal.rs`: JSON lines
+appended when `$CHAIRLIFT_ACTION_JOURNAL` is set, a no-op otherwise. A
+dry-run invocation is recorded with `Suppressed: SuppressedDryRun` and the
+argv that would have run, which is what lets a test assert intent ("clicking
+Switch would have run `bootc switch ghcr.io/…/dakota:testing`") without
+granting privilege; see `internal/ublue`'s
+`TestRunHelperJournalsEveryInvocation`.
+
+A live privileged action writes **two** lines, not one, because a single
+pre-dispatch record cannot distinguish an action that finished from one that
+died in flight:
+
+1. an `attempt` entry written before dispatch, carrying the assembled argv —
+   so the intent is recorded whether or not the process is allowed to start;
+2. an outcome entry written after the process returns: `success`, `failure`,
+   `denied` (PolicyKit dismissed or refused authentication), or `timeout`.
+
+A refusal never dispatches at all and therefore writes a single `refused`
+entry. Each entry carries:
+
+| field | meaning |
+|---|---|
+| `status` | `attempt`, `success`, `failure`, `denied`, `timeout`, `refused`, or `dry-run` |
+| `suppressed` | `no` (something was dispatched), `dry-run` (short-circuited before pkexec), `refused` (ChairLift declined to build a command, so nothing was dispatched) |
+| `would_run` | the argv a real run executes, verbatim |
+| `root_command` | the concrete privileged command the helper is expected to run, e.g. `bootc switch --enforce-container-sigpolicy …` |
+| `error` | the failure or refusal message, when there is one |
+
+`suppressed` and `status` answer different questions and must not be
+conflated. `suppressed: refused` means no root process ever started: the
+refusal is resolved in the unprivileged process by the helper's registered
+`helperexec.RootCommandResolver`, before pkexec is spawned, so there is not
+even an authentication prompt. A helper that refuses *after* pkexec has been
+dispatched is recorded as an executed failure with `suppressed: no` — the
+audit trail may not claim nothing ran once a root process did.
+
+`root_command` is resolved in the unprivileged GUI process from the same
+image descriptor and root-owned channel tables the helper reads. It is
+therefore a prediction of the helper's own resolution rather than a report of
+it; only the root helper's resolution is authoritative.
 
 ChairLift escalates through three choke points, and the record is written at
 each of them rather than at the call sites that reach them:
@@ -1180,6 +1213,11 @@ each of them rather than at the call sites that reach them:
 | `internal/helperexec.Run` | both fixed-path helper binaries, via `internal/ublue.runHelper` and `internal/updex.runHelper` | 9 `…ublue.*` + 3 `…updex.*` |
 | `internal/stageexec.Stage` | both stage scripts, via `internal/bootc.StageUpdate` and `internal/sysupdate.StageUpdate` | `…bootc.stage`, `…sysupdate.stage` |
 | `views.UserHome.runMaintenanceAction` | config-declared maintenance scripts run `sudo` | none; falls back to `org.freedesktop.policykit.exec` |
+
+`internal/helperexec` stays helper-agnostic: it knows nothing about `bootc`
+or `usermod`, and a helper's owning package registers its
+`RootCommandResolver` (and hence its refusals) by helper basename from
+`init`.
 
 The staging and maintenance rows were added late: `helperexec` was for a long
 time the only package honoring the contract, so the OS update — the least

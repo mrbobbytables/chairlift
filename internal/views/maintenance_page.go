@@ -2,6 +2,7 @@ package views
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -252,23 +253,50 @@ func (uh *UserHome) runMaintenanceAction(title, script string, sudo bool, button
 		// preview string that could drift from it.
 		command := pageview.MaintenanceCommand(script, sudo)
 		wouldRun := append([]string{command.Name}, command.Args...)
-		suppressed := journal.SuppressedNone
-		if !decision.Execute {
-			suppressed = journal.SuppressedDryRun
-		}
-		journal.Record(
-			path.Base(script),
-			map[string]string{"title": title, "sudo": strconv.FormatBool(sudo)},
-			wouldRun,
-			suppressed,
-		)
+		action := path.Base(script)
+		args := map[string]string{"title": title, "sudo": strconv.FormatBool(sudo)}
 
 		if decision.Execute {
+			// A live run is journalled twice — "attempt" before dispatch and
+			// an outcome afterwards — so an entry that stays at "attempt"
+			// means the action died mid-flight rather than leaving a run
+			// whose result was never recorded.
+			journal.RecordEntry(journal.Entry{
+				Action:     action,
+				Status:     journal.StatusAttempt,
+				Args:       args,
+				WouldRun:   wouldRun,
+				Suppressed: journal.SuppressedNone,
+			})
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
 			err = maintenanceexec.Run(ctx, command.Name, command.Args...)
+
+			outcome := journal.Entry{
+				Action:     action,
+				Status:     journal.StatusSuccess,
+				Args:       args,
+				WouldRun:   wouldRun,
+				Suppressed: journal.SuppressedNone,
+			}
+			if err != nil {
+				outcome.Status = journal.StatusFailure
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					outcome.Status = journal.StatusTimeout
+				}
+				outcome.Error = err.Error()
+			}
+			journal.RecordEntry(outcome)
 		} else {
+			journal.RecordEntry(journal.Entry{
+				Action:     action,
+				Status:     journal.StatusDryRun,
+				Args:       args,
+				WouldRun:   wouldRun,
+				Suppressed: journal.SuppressedDryRun,
+			})
 			log.Printf("[DRY-RUN] Would execute: %s", strings.Join(wouldRun, " "))
 		}
 

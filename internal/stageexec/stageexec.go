@@ -89,24 +89,54 @@ func ScriptAvailable(scriptPath string) bool {
 // logs and emits the preview events without invoking pkexec; otherwise it
 // runs `pkexec scriptPath`, streaming progress. It always closes progressCh.
 //
-// The journal entry is written before dispatch so the argv ChairLift
-// assembled is recorded whether or not the process is allowed to start,
-// matching helperexec.Run. Action is the script's base name — the staging
-// operation's stable identity, independent of the /usr/libexec prefix — and
-// WouldRun is the argv a real run executes, so a dry-run entry and a live
-// entry differ only in Suppressed.
+// A live run is journalled twice, matching helperexec.Run: an "attempt"
+// entry before dispatch, so the argv ChairLift assembled is recorded whether
+// or not the process is allowed to start, and an outcome entry afterwards,
+// so an entry that stays at "attempt" means the action died mid-flight
+// rather than "it ran and we never said how it ended". Action is the
+// script's base name — the staging operation's stable identity, independent
+// of the /usr/libexec prefix — and WouldRun is the argv a real run executes,
+// so a dry-run entry and a live entry differ only in Suppressed.
 func Stage(ctx context.Context, progressCh chan<- ProgressEvent, pkexec, scriptPath string) error {
 	// The stage scripts take no arguments, so Entry.Args stays nil and the
 	// whole invocation is carried by WouldRun.
 	action, wouldRun := path.Base(scriptPath), []string{pkexec, scriptPath}
 
 	if dryrun.Enabled() {
-		journal.Record(action, nil, wouldRun, journal.SuppressedDryRun)
+		journal.RecordEntry(journal.Entry{
+			Action:     action,
+			Status:     journal.StatusDryRun,
+			WouldRun:   wouldRun,
+			Suppressed: journal.SuppressedDryRun,
+		})
 		log.Printf("[DRY-RUN] would execute: %s %s", pkexec, scriptPath)
 		return DryRun(ctx, progressCh, scriptPath)
 	}
-	journal.Record(action, nil, wouldRun, journal.SuppressedNone)
-	return Run(ctx, progressCh, pkexec, scriptPath)
+	journal.RecordEntry(journal.Entry{
+		Action:     action,
+		Status:     journal.StatusAttempt,
+		WouldRun:   wouldRun,
+		Suppressed: journal.SuppressedNone,
+	})
+
+	err := Run(ctx, progressCh, pkexec, scriptPath)
+
+	outcome := journal.Entry{
+		Action:     action,
+		Status:     journal.StatusSuccess,
+		WouldRun:   wouldRun,
+		Suppressed: journal.SuppressedNone,
+	}
+	if err != nil {
+		outcome.Status = journal.StatusFailure
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			outcome.Status = journal.StatusTimeout
+		}
+		outcome.Error = err.Error()
+	}
+	journal.RecordEntry(outcome)
+
+	return err
 }
 
 // DryRun emits the standard preview and completion events without starting a

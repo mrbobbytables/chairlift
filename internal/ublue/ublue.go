@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"log"
 	"os/user"
+	"path"
 	"sync"
 	"time"
 
@@ -51,6 +52,22 @@ const (
 // DefaultContext returns a context with the default timeout.
 func DefaultContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), DefaultTimeout)
+}
+
+// init teaches internal/helperexec how to predict the root command this
+// package's helper runs, and how to recognise a refusal, without helperexec
+// having to import internal/ubluehelper or switch on helper basenames
+// itself. The refusal is translated into helperexec's own error type because
+// helperexec owns the pre-dispatch refusal contract.
+func init() {
+	helperexec.RegisterRootCommandResolver(path.Base(HelperPath), func(args []string) ([]string, error) {
+		rootCmd, err := ubluehelper.ResolveRootCommand(args)
+		var refusal *ubluehelper.RefusalError
+		if errors.As(err, &refusal) {
+			return nil, &helperexec.RefusalError{Message: refusal.Message}
+		}
+		return rootCmd, err
+	})
 }
 
 // Error represents a ublue helper error. It aliases

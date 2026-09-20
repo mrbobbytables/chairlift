@@ -105,6 +105,7 @@ type UserHome struct {
 	developerGroup  *adw.PreferencesGroup
 	developerRow    *adw.ActionRow
 	developerSwitch *gtk.Switch
+	developerGate   actionstate.Gate
 	gamingGroup     *adw.PreferencesGroup
 	gamingRow       *adw.ActionRow
 	gamingSwitch    *gtk.Switch

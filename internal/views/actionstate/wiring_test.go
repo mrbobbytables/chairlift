@@ -50,3 +50,37 @@ func TestUpdatesPageUsesGuardedRefreshDecisions(t *testing.T) {
 		}
 	}
 }
+
+func TestFeaturesPageDeveloperModeUsesGate(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller could not locate wiring_test.go")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+
+	viewsPath := filepath.Join(repoRoot, "internal", "views", "views.go")
+	viewsSource, err := os.ReadFile(viewsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", viewsPath, err)
+	}
+	if !strings.Contains(string(viewsSource), "developerGate   actionstate.Gate") {
+		t.Errorf("views.go UserHome does not contain developerGate actionstate.Gate")
+	}
+
+	featuresPath := filepath.Join(repoRoot, "internal", "views", "features_page.go")
+	featuresSource, err := os.ReadFile(featuresPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", featuresPath, err)
+	}
+	featuresText := string(featuresSource)
+
+	for _, required := range []string{
+		`return true // block the visual change until the switch is confirmed`,
+		`if !uh.developerGate.TryStart()`,
+		`defer uh.developerGate.Reset()`,
+	} {
+		if !strings.Contains(featuresText, required) {
+			t.Errorf("features_page wiring does not contain %q", required)
+		}
+	}
+}

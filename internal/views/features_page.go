@@ -359,7 +359,7 @@ func (uh *UserHome) buildDeveloperGroup(page *adw.PreferencesPage, status ublue.
 	dxRow := row
 	stateSetCb := func(_ gtk.Switch, state bool) bool {
 		uh.onDeveloperToggled(state, sw, dxRow)
-		return true
+		return true // block the visual change until the switch is confirmed
 	}
 	toggle.ConnectStateSet(&stateSetCb)
 
@@ -431,9 +431,14 @@ func (uh *UserHome) refreshGamingState() {
 
 // onDeveloperToggled adds or removes this account's developer groups.
 func (uh *UserHome) onDeveloperToggled(enabled bool, toggle *gtk.Switch, row *adw.ActionRow) {
+	if !uh.developerGate.TryStart() {
+		return
+	}
 	toggle.SetSensitive(false)
 
 	go func() {
+		defer uh.developerGate.Reset()
+
 		ctx, cancel := ublue.DefaultContext()
 		defer cancel()
 

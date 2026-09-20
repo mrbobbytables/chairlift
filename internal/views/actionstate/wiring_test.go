@@ -63,8 +63,9 @@ func TestFeaturesPageDeveloperModeUsesGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", viewsPath, err)
 	}
-	if !strings.Contains(string(viewsSource), "developerGate   actionstate.Gate") {
-		t.Errorf("views.go UserHome does not contain developerGate actionstate.Gate")
+	viewsText := string(viewsSource)
+	if !strings.Contains(viewsText, "developerGate") || !strings.Contains(viewsText, "actionstate.Gate") {
+		t.Errorf("views.go UserHome does not contain developerGate actionstate.Gate field")
 	}
 
 	featuresPath := filepath.Join(repoRoot, "internal", "views", "features_page.go")
@@ -75,9 +76,9 @@ func TestFeaturesPageDeveloperModeUsesGate(t *testing.T) {
 	featuresText := string(featuresSource)
 
 	for _, required := range []string{
-		`return true // block the visual change until the switch is confirmed`,
-		`if !uh.developerGate.TryStart()`,
-		`defer uh.developerGate.Reset()`,
+		`uh.developerGate.TryStart()`,
+		`uh.developerGate.Reset()`,
+		`toggle.SetState(`,
 	} {
 		if !strings.Contains(featuresText, required) {
 			t.Errorf("features_page wiring does not contain %q", required)

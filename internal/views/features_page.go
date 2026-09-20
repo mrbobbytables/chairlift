@@ -437,24 +437,34 @@ func (uh *UserHome) onDeveloperToggled(enabled bool, toggle *gtk.Switch, row *ad
 	toggle.SetSensitive(false)
 
 	go func() {
-		defer uh.developerGate.Reset()
+		dispatched := false
+		defer func() {
+			if !dispatched {
+				uh.developerGate.Reset()
+			}
+		}()
 
 		ctx, cancel := ublue.DefaultContext()
 		defer cancel()
 
 		err := ublue.SetDeveloperMode(ctx, enabled)
 
+		dispatched = true
 		sgtk.RunOnMainThread(func() {
+			defer uh.developerGate.Reset()
 			toggle.SetSensitive(true)
 
 			if err != nil {
 				toggle.SetActive(!enabled)
+				toggle.SetState(!enabled)
 				uh.toastAdder.ShowErrorToast(fmt.Sprintf("Developer mode failed: %v", err))
 				return
 			}
 
 			decision := actionmsg.DeveloperMode(dryrun.Enabled(), enabled)
-			toggle.SetActive(decision.Confirm == enabled)
+			confirmed := decision.Confirm == enabled
+			toggle.SetActive(confirmed)
+			toggle.SetState(confirmed)
 			if decision.Confirm {
 				row.SetSubtitle(pageview.DeveloperResultSubtitle(enabled))
 			}

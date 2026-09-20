@@ -179,27 +179,27 @@ func TestResetClearsTheSequenceCounter(t *testing.T) {
 	}
 }
 
-func TestRecordEntrySerializesStatusRootCommandAndError(t *testing.T) {
+func TestRecordEntrySerializesStatusRootCommandsAndError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.jsonl")
 	withSink(t, path)
 
 	RecordEntry(Entry{
-		Action:      "channel-switch",
-		Status:      StatusAttempt,
-		Args:        map[string]string{"channel": "testing"},
-		WouldRun:    []string{"pkexec", "/usr/bin/chairlift-ublue-helper", "channel-switch", "testing"},
-		RootCommand: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/ublue-os/bluefin:testing"},
-		Suppressed:  SuppressedNone,
+		Action:       "channel-switch",
+		Status:       StatusAttempt,
+		Args:         map[string]string{"channel": "testing"},
+		WouldRun:     []string{"pkexec", "/usr/bin/chairlift-ublue-helper", "channel-switch", "testing"},
+		RootCommands: [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/ublue-os/bluefin:testing"}},
+		Suppressed:   SuppressedNone,
 	})
 
 	RecordEntry(Entry{
-		Action:      "channel-switch",
-		Status:      StatusDenied,
-		Args:        map[string]string{"channel": "testing"},
-		WouldRun:    []string{"pkexec", "/usr/bin/chairlift-ublue-helper", "channel-switch", "testing"},
-		RootCommand: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/ublue-os/bluefin:testing"},
-		Suppressed:  SuppressedNone,
-		Error:       "command failed (exit 126): authorization denied",
+		Action:       "channel-switch",
+		Status:       StatusDenied,
+		Args:         map[string]string{"channel": "testing"},
+		WouldRun:     []string{"pkexec", "/usr/bin/chairlift-ublue-helper", "channel-switch", "testing"},
+		RootCommands: [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/ublue-os/bluefin:testing"}},
+		Suppressed:   SuppressedNone,
+		Error:        "command failed (exit 126): authorization denied",
 	})
 
 	RecordEntry(Entry{
@@ -219,8 +219,8 @@ func TestRecordEntrySerializesStatusRootCommandAndError(t *testing.T) {
 	if attempt.Status != StatusAttempt {
 		t.Errorf("attempt status = %q, want %q", attempt.Status, StatusAttempt)
 	}
-	if len(attempt.RootCommand) != 4 || attempt.RootCommand[0] != "bootc" {
-		t.Errorf("attempt root command = %v, want bootc switch argv", attempt.RootCommand)
+	if len(attempt.RootCommands) != 1 || len(attempt.RootCommands[0]) != 4 || attempt.RootCommands[0][0] != "bootc" {
+		t.Errorf("attempt root commands = %v, want one bootc switch argv", attempt.RootCommands)
 	}
 
 	denied := entries[1]

@@ -1189,7 +1189,7 @@ entry. Each entry carries:
 | `status` | `attempt`, `success`, `failure`, `denied`, `timeout`, `refused`, or `dry-run` |
 | `suppressed` | `no` (something was dispatched), `dry-run` (short-circuited before pkexec), `refused` (ChairLift declined to build a command, so nothing was dispatched) |
 | `would_run` | the argv a real run executes, verbatim |
-| `root_command` | the concrete privileged command the helper is expected to run, e.g. `bootc switch --enforce-container-sigpolicy …` (or the primary/first command for multi-command helper actions) |
+| `root_commands` | every privileged command the helper is expected to run, in dispatch order, e.g. `[["bootc", "switch", "--enforce-container-sigpolicy", …]]`, or the four `usermod`/`gpasswd` calls a developer-mode change makes |
 | `error` | the failure or refusal message, when there is one |
 
 `suppressed` and `status` answer different questions and must not be
@@ -1200,10 +1200,18 @@ even an authentication prompt. A helper that refuses *after* pkexec has been
 dispatched is recorded as an executed failure with `suppressed: no` — the
 audit trail may not claim nothing ran once a root process did.
 
-`root_command` is resolved in the unprivileged GUI process from the same
+`root_commands` is resolved in the unprivileged GUI process from the same
 image descriptor and root-owned channel tables the helper reads. It is
 therefore a prediction of the helper's own resolution rather than a report of
 it; only the root helper's resolution is authoritative.
+
+It records *every* command the helper runs as root, not just the first: a
+developer-mode toggle changes membership in each of the four developer
+groups, and an automatic-update toggle runs two `systemctl` steps
+(`unmask` then `enable --now`, or `disable --now` then `mask`). Recording one
+of them would under-report the privilege actually exercised. The helper skips
+a developer group the running image does not define, so a resolved command
+may not run; the field records what ChairLift asked root to do.
 
 ChairLift escalates through three choke points, and the record is written at
 each of them rather than at the call sites that reach them:

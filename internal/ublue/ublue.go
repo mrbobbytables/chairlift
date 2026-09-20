@@ -54,19 +54,19 @@ func DefaultContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), DefaultTimeout)
 }
 
-// init teaches internal/helperexec how to predict the root command this
+// init teaches internal/helperexec how to predict the root commands this
 // package's helper runs, and how to recognise a refusal, without helperexec
 // having to import internal/ubluehelper or switch on helper basenames
 // itself. The refusal is translated into helperexec's own error type because
 // helperexec owns the pre-dispatch refusal contract.
 func init() {
-	helperexec.RegisterRootCommandResolver(path.Base(HelperPath), func(args []string) ([]string, error) {
-		rootCmd, err := ubluehelper.ResolveRootCommand(args)
+	helperexec.RegisterRootCommandResolver(path.Base(HelperPath), func(args []string) ([][]string, error) {
+		rootCmds, err := ubluehelper.ResolveRootCommands(args)
 		var refusal *ubluehelper.RefusalError
 		if errors.As(err, &refusal) {
 			return nil, &helperexec.RefusalError{Message: refusal.Message}
 		}
-		return rootCmd, err
+		return rootCmds, err
 	})
 }
 

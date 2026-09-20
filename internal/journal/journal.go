@@ -91,19 +91,22 @@ type Entry struct {
 	// command rather than re-deriving it in a test is the whole point: the
 	// assertion then checks the command ChairLift actually assembled.
 	WouldRun []string `json:"would_run,omitempty"`
-	// RootCommand is the concrete privileged command ChairLift expects the
-	// helper to run (e.g. `bootc switch --enforce-container-sigpolicy
-	// <target>`).
+	// RootCommands are the concrete privileged commands ChairLift expects
+	// the helper to run, in the order the helper runs them (e.g. the single
+	// `bootc switch --enforce-container-sigpolicy <target>`, or the
+	// `systemctl unmask` / `systemctl enable --now` pair that turns
+	// automatic updates on).
 	//
-	// It is resolved in the unprivileged process from the same image
-	// descriptor and root-owned channel tables the helper reads, so it is a
-	// prediction of the helper's own resolution rather than a report of it.
-	// The two agree unless the descriptor changes between resolution and
+	// Every command the helper dispatches is recorded, not just the first:
+	// an audit field that listed a subset of what ran as root would
+	// under-report the privilege actually exercised.
+	//
+	// They are resolved in the unprivileged process from the same image
+	// descriptor and root-owned channel tables the helper reads, so they are
+	// a prediction of the helper's own resolution rather than a report of
+	// it. The two agree unless the descriptor changes between resolution and
 	// dispatch; only the root helper's resolution is authoritative.
-	// For multi-command helper actions (such as developer-mode group
-	// modifications or automatic-update timer enablement), RootCommand
-	// records the primary or first command invoked by the helper.
-	RootCommand []string `json:"root_command,omitempty"`
+	RootCommands [][]string `json:"root_commands,omitempty"`
 	// Suppressed records whether the action ran.
 	Suppressed Suppression `json:"suppressed"`
 	// Error records the failure or refusal message, if any.

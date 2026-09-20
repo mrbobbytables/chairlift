@@ -1,6 +1,7 @@
 package ubluehelper
 
 import (
+	"os/user"
 	"reflect"
 	"strings"
 	"testing"
@@ -623,76 +624,82 @@ func TestGroupArgsMatchBluefinctlCommands(t *testing.T) {
 	}
 }
 
-func TestResolveRootCommand(t *testing.T) {
+func TestResolveRootCommands(t *testing.T) {
 	info := imageinfo.Info{Name: "dakota", Tag: "latest", Ref: "docker://ghcr.io/projectbluefin/dakota"}
 	restore := SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
 	t.Cleanup(restore)
 
 	tests := []struct {
-		name    string
-		args    []string
-		wantCmd []string
-		wantErr bool
+		name     string
+		args     []string
+		wantCmds [][]string
+		wantErr  bool
 	}{
 		{
-			name:    "channel switch testing",
-			args:    []string{"channel-switch", "testing"},
-			wantCmd: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"},
+			name:     "channel switch testing",
+			args:     []string{"channel-switch", "testing"},
+			wantCmds: [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}},
 		},
 		{
-			name:    "driver switch nvidia",
-			args:    []string{"driver-switch", "nvidia"},
-			wantCmd: []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota-nvidia:latest"},
+			name:     "driver switch nvidia",
+			args:     []string{"driver-switch", "nvidia"},
+			wantCmds: [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota-nvidia:latest"}},
 		},
 		{
-			name:    "restart",
-			args:    []string{"restart"},
-			wantCmd: []string{"systemctl", "reboot"},
+			name:     "restart",
+			args:     []string{"restart"},
+			wantCmds: [][]string{{"systemctl", "reboot"}},
 		},
 		{
-			name:    "rollback",
-			args:    []string{"rollback"},
-			wantCmd: []string{"bootc", "rollback"},
+			name:     "rollback",
+			args:     []string{"rollback"},
+			wantCmds: [][]string{{"bootc", "rollback"}},
 		},
 		{
-			name:    "factory-reset",
-			args:    []string{"factory-reset"},
-			wantCmd: []string{"bootc", "install", "reset", "--experimental", "--apply"},
+			name:     "factory-reset",
+			args:     []string{"factory-reset"},
+			wantCmds: [][]string{{"bootc", "install", "reset", "--experimental", "--apply"}},
 		},
 		{
-			name:    "auto-updates-enable",
-			args:    []string{"auto-updates-enable"},
-			wantCmd: []string{"systemctl", "enable", "--now", autoupdate.TimerUnit},
+			name: "auto-updates-enable",
+			args: []string{"auto-updates-enable"},
+			wantCmds: [][]string{
+				{"systemctl", "unmask", autoupdate.TimerUnit},
+				{"systemctl", "enable", "--now", autoupdate.TimerUnit},
+			},
 		},
 		{
-			name:    "auto-updates-disable",
-			args:    []string{"auto-updates-disable"},
-			wantCmd: []string{"systemctl", "disable", "--now", autoupdate.TimerUnit},
+			name: "auto-updates-disable",
+			args: []string{"auto-updates-disable"},
+			wantCmds: [][]string{
+				{"systemctl", "disable", "--now", autoupdate.TimerUnit},
+				{"systemctl", "mask", autoupdate.TimerUnit},
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveRootCommand(tc.args)
+			got, err := ResolveRootCommands(tc.args)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("ResolveRootCommand() error = %v, wantErr = %v", err, tc.wantErr)
+				t.Fatalf("ResolveRootCommands() error = %v, wantErr = %v", err, tc.wantErr)
 			}
-			if !reflect.DeepEqual(got, tc.wantCmd) {
-				t.Errorf("ResolveRootCommand() = %v, want %v", got, tc.wantCmd)
+			if !reflect.DeepEqual(got, tc.wantCmds) {
+				t.Errorf("ResolveRootCommands() = %v, want %v", got, tc.wantCmds)
 			}
 		})
 	}
 }
 
-func TestResolveRootCommandRefusals(t *testing.T) {
+func TestResolveRootCommandsRefusals(t *testing.T) {
 	// Pinned build has no testing counterpart
 	info := imageinfo.Info{Name: "dakota", Tag: "20260817", Ref: "docker://ghcr.io/projectbluefin/dakota"}
 	restore := SetDetectInfo(func() (imageinfo.Info, error) { return info, nil })
 	t.Cleanup(restore)
 
-	_, err := ResolveRootCommand([]string{"channel-switch", "testing"})
+	_, err := ResolveRootCommands([]string{"channel-switch", "testing"})
 	if err == nil {
-		t.Fatal("ResolveRootCommand() error = nil, want refusal for unswitchable channel")
+		t.Fatal("ResolveRootCommands() error = nil, want refusal for unswitchable channel")
 	}
 	var refusalErr *RefusalError
 	if !reflect.TypeOf(err).AssignableTo(reflect.TypeOf(refusalErr)) {
@@ -703,11 +710,59 @@ func TestResolveRootCommandRefusals(t *testing.T) {
 	ltsInfo := imageinfo.Info{Name: "bluefin", Tag: "lts", Ref: "docker://ghcr.io/ublue-os/bluefin"}
 	SetDetectInfo(func() (imageinfo.Info, error) { return ltsInfo, nil })
 
-	_, err = ResolveRootCommand([]string{"driver-switch", "nvidia"})
+	_, err = ResolveRootCommands([]string{"driver-switch", "nvidia"})
 	if err == nil {
-		t.Fatal("ResolveRootCommand() error = nil, want refusal for unpublished driver")
+		t.Fatal("ResolveRootCommands() error = nil, want refusal for unpublished driver")
 	}
 	if !reflect.TypeOf(err).AssignableTo(reflect.TypeOf(refusalErr)) {
 		t.Errorf("error type = %T, want *RefusalError", err)
+	}
+}
+
+// TestResolveRootCommandsCoversEveryDevGroup pins the multi-command contract
+// for developer mode: the helper loops over every group in DevGroups(), so
+// resolving only the first would under-report what runs as root.
+func TestResolveRootCommandsCoversEveryDevGroup(t *testing.T) {
+	account, err := user.Current()
+	if err != nil {
+		t.Skipf("resolving current user: %v", err)
+	}
+
+	tests := []struct {
+		command  string
+		wantName string
+		wantArgs func(group string) []string
+	}{
+		{
+			command:  CommandDXEnable,
+			wantName: "usermod",
+			wantArgs: func(group string) []string {
+				return []string{"usermod", "-aG", group, account.Username}
+			},
+		},
+		{
+			command:  CommandDXDisable,
+			wantName: "gpasswd",
+			wantArgs: func(group string) []string {
+				return []string{"gpasswd", "-d", account.Username, group}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.command, func(t *testing.T) {
+			got, err := ResolveRootCommands([]string{tc.command})
+			if err != nil {
+				t.Fatalf("ResolveRootCommands(%q) error = %v", tc.command, err)
+			}
+
+			want := make([][]string, 0, len(DevGroups()))
+			for _, group := range DevGroups() {
+				want = append(want, tc.wantArgs(group))
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("ResolveRootCommands(%q) = %v, want %v", tc.command, got, want)
+			}
+		})
 	}
 }

@@ -352,7 +352,7 @@ var (
 	detectImageInfo = imageinfo.Detect
 )
 
-// SetDetectInfo replaces the image detection ResolveRootCommand consults and
+// SetDetectInfo replaces the image detection ResolveRootCommands consults and
 // returns a cleanup function restoring the previous one.
 //
 // Tests use it to resolve against a fixed descriptor, and
@@ -382,18 +382,22 @@ func detectInfo() (imageinfo.Info, error) {
 	return fn()
 }
 
-// ResolveRootCommand resolves the concrete root command the helper is
-// expected to execute for the given helper arguments. For multi-command helper
-// actions (such as developer-mode group membership changes or automatic-update
-// timer enablement), it resolves the primary or initial root command. It returns
-// *RefusalError when the command cannot be executed due to an unswitchable
-// channel or unpublished driver image.
+// ResolveRootCommands resolves every concrete root command the helper is
+// expected to execute for the given helper arguments, in the order the helper
+// runs them. Multi-command actions resolve to several commands — a
+// developer-mode change touches every group in DevGroups(), an
+// automatic-update toggle unmasks and enables (or disables and masks) the
+// timer — because the journal records the privilege actually exercised, not
+// its first step. It returns *RefusalError when the command cannot be
+// executed due to an unswitchable channel or unpublished driver image.
 //
 // It runs in the unprivileged process, so its answer is a prediction of the
 // helper's own resolution, not a report of it: the two agree because both
-// derive the command from the same image descriptor and root-owned channel
-// tables, but only the helper's resolution is authoritative.
-func ResolveRootCommand(args []string) ([]string, error) {
+// derive the commands from the same image descriptor and root-owned channel
+// tables, but only the helper's resolution is authoritative. The helper skips
+// a developer group this image does not define, so a group command resolved
+// here may not run; the entry records what ChairLift asked root to do.
+func ResolveRootCommands(args []string) ([][]string, error) {
 	inv, err := ParseInvocation(args)
 	if err != nil {
 		return nil, err
@@ -412,7 +416,7 @@ func ResolveRootCommand(args []string) ([]string, error) {
 					inv.Channel, info.EffectiveTag()),
 			}
 		}
-		return append([]string{"bootc"}, sArgs...), nil
+		return [][]string{append([]string{"bootc"}, sArgs...)}, nil
 
 	case CommandDriverSwitch:
 		info, err := detectInfo()
@@ -426,52 +430,43 @@ func ResolveRootCommand(args []string) ([]string, error) {
 					inv.Driver, info.CleanRef(), info.EffectiveTag()),
 			}
 		}
-		return append([]string{"bootc"}, dArgs...), nil
+		return [][]string{append([]string{"bootc"}, dArgs...)}, nil
 
 	case CommandRestart:
-		return append([]string{"systemctl"}, RestartArgs()...), nil
+		return [][]string{append([]string{"systemctl"}, RestartArgs()...)}, nil
 
 	case CommandRollback:
-		return append([]string{"bootc"}, RollbackArgs()...), nil
+		return [][]string{append([]string{"bootc"}, RollbackArgs()...)}, nil
 
 	case CommandFactoryReset:
-		return append([]string{"bootc"}, FactoryResetArgs()...), nil
+		return [][]string{append([]string{"bootc"}, FactoryResetArgs()...)}, nil
 
-	case CommandAutoEnable:
-		steps, ok := AutoUpdateArgs(CommandAutoEnable)
-		if ok && len(steps) > 1 {
-			return append([]string{"systemctl"}, steps[1]...), nil
+	case CommandAutoEnable, CommandAutoDisable:
+		steps, ok := AutoUpdateArgs(inv.Command)
+		if !ok {
+			return nil, nil
 		}
-		return nil, nil
-
-	case CommandAutoDisable:
-		steps, ok := AutoUpdateArgs(CommandAutoDisable)
-		if ok && len(steps) > 0 {
-			return append([]string{"systemctl"}, steps[0]...), nil
+		commands := make([][]string, 0, len(steps))
+		for _, step := range steps {
+			commands = append(commands, append([]string{"systemctl"}, step...))
 		}
-		return nil, nil
+		return commands, nil
 
-	case CommandDXEnable:
+	case CommandDXEnable, CommandDXDisable:
 		username := ""
 		if u, err := user.Current(); err == nil {
 			username = u.Username
 		}
-		name, gArgs, ok := GroupArgs(CommandDXEnable, username, DevGroups()[0])
-		if ok {
-			return append([]string{name}, gArgs...), nil
+		groups := DevGroups()
+		commands := make([][]string, 0, len(groups))
+		for _, group := range groups {
+			name, gArgs, ok := GroupArgs(inv.Command, username, group)
+			if !ok {
+				return nil, nil
+			}
+			commands = append(commands, append([]string{name}, gArgs...))
 		}
-		return nil, nil
-
-	case CommandDXDisable:
-		username := ""
-		if u, err := user.Current(); err == nil {
-			username = u.Username
-		}
-		name, gArgs, ok := GroupArgs(CommandDXDisable, username, DevGroups()[0])
-		if ok {
-			return append([]string{name}, gArgs...), nil
-		}
-		return nil, nil
+		return commands, nil
 
 	default:
 		return nil, nil

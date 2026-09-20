@@ -576,7 +576,7 @@ func TestRunHelperJournalsEveryInvocation(t *testing.T) {
 		t.Fatalf("journal has %d entries, want 2 (attempt and success)", len(entries))
 	}
 	wantArgv := []string{pkexec, HelperPath, ubluehelper.CommandChannelSwitch, "testing"}
-	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
+	wantRootCmds := [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}}
 
 	attempt := entries[0]
 	if attempt.Action != ubluehelper.CommandChannelSwitch {
@@ -591,8 +591,8 @@ func TestRunHelperJournalsEveryInvocation(t *testing.T) {
 	if !reflect.DeepEqual(attempt.WouldRun, wantArgv) {
 		t.Errorf("attempt WouldRun = %v, want %v", attempt.WouldRun, wantArgv)
 	}
-	if !reflect.DeepEqual(attempt.RootCommand, wantRootCmd) {
-		t.Errorf("attempt RootCommand = %v, want %v", attempt.RootCommand, wantRootCmd)
+	if !reflect.DeepEqual(attempt.RootCommands, wantRootCmds) {
+		t.Errorf("attempt RootCommands = %v, want %v", attempt.RootCommands, wantRootCmds)
 	}
 
 	success := entries[1]
@@ -608,8 +608,8 @@ func TestRunHelperJournalsEveryInvocation(t *testing.T) {
 	if !reflect.DeepEqual(success.WouldRun, wantArgv) {
 		t.Errorf("success WouldRun = %v, want %v", success.WouldRun, wantArgv)
 	}
-	if !reflect.DeepEqual(success.RootCommand, wantRootCmd) {
-		t.Errorf("success RootCommand = %v, want %v", success.RootCommand, wantRootCmd)
+	if !reflect.DeepEqual(success.RootCommands, wantRootCmds) {
+		t.Errorf("success RootCommands = %v, want %v", success.RootCommands, wantRootCmds)
 	}
 }
 
@@ -653,9 +653,9 @@ func TestRunHelperJournalsPolicyKitDenied(t *testing.T) {
 	if !strings.Contains(denied.Error, "126") {
 		t.Errorf("denied error = %q, want exit 126", denied.Error)
 	}
-	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
-	if !reflect.DeepEqual(denied.RootCommand, wantRootCmd) {
-		t.Errorf("denied RootCommand = %v, want %v", denied.RootCommand, wantRootCmd)
+	wantRootCmds := [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}}
+	if !reflect.DeepEqual(denied.RootCommands, wantRootCmds) {
+		t.Errorf("denied RootCommands = %v, want %v", denied.RootCommands, wantRootCmds)
 	}
 }
 

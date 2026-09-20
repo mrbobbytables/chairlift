@@ -74,13 +74,18 @@ func (e *RefusalError) Error() string {
 	return e.Message
 }
 
-// RootCommandResolver predicts the concrete privileged command a helper will
-// run for args, for the journal's root_command field. It returns a
-// *RefusalError when ChairLift declines to build a command at all, and
-// (nil, nil) when the command cannot be predicted from the unprivileged
-// process — an unpredictable command is journalled without root_command
-// rather than blocking the invocation.
-type RootCommandResolver func(args []string) ([]string, error)
+// RootCommandResolver predicts the concrete privileged commands a helper
+// will run for args, in dispatch order, for the journal's root_commands
+// field. A helper action that runs several root commands (a developer-group
+// change touching every developer group, an automatic-update toggle
+// unmasking and enabling a timer) must resolve all of them: the journal
+// records the privilege actually exercised, not a sample of it.
+//
+// It returns a *RefusalError when ChairLift declines to build a command at
+// all, and (nil, nil) when the commands cannot be predicted from the
+// unprivileged process — an unpredictable action is journalled without
+// root_commands rather than blocking the invocation.
+type RootCommandResolver func(args []string) ([][]string, error)
 
 var (
 	resolversMu sync.RWMutex
@@ -111,7 +116,7 @@ func journalArgs(args []string) map[string]string {
 	return map[string]string{"args": strings.Join(args[1:], " ")}
 }
 
-func resolveRootCommand(helperPath string, args []string) ([]string, error) {
+func resolveRootCommands(helperPath string, args []string) ([][]string, error) {
 	resolversMu.RLock()
 	resolver := resolvers[path.Base(helperPath)]
 	resolversMu.RUnlock()
@@ -137,7 +142,7 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 		action = args[0]
 	}
 
-	rootCmd, resolveErr := resolveRootCommand(helperPath, args)
+	rootCmds, resolveErr := resolveRootCommands(helperPath, args)
 
 	fullArgs := append([]string{helperPath}, args...)
 	wouldRun := append([]string{pkexecPath}, fullArgs...)
@@ -163,12 +168,12 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 		dryRunArgs := append(append([]string{}, args...), "--dry-run")
 		wouldRunDry := append([]string{pkexecPath, helperPath}, dryRunArgs...)
 		journal.RecordEntry(journal.Entry{
-			Action:      action,
-			Status:      journal.StatusDryRun,
-			Args:        journalArgs(args),
-			WouldRun:    wouldRunDry,
-			RootCommand: rootCmd,
-			Suppressed:  journal.SuppressedDryRun,
+			Action:       action,
+			Status:       journal.StatusDryRun,
+			Args:         journalArgs(args),
+			WouldRun:     wouldRunDry,
+			RootCommands: rootCmds,
+			Suppressed:   journal.SuppressedDryRun,
 		})
 		log.Printf("[DRY-RUN] would execute: %s %s %v", pkexecPath, helperPath, dryRunArgs)
 		return "", "", nil
@@ -176,12 +181,12 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 
 	// Record attempt before dispatch
 	journal.RecordEntry(journal.Entry{
-		Action:      action,
-		Status:      journal.StatusAttempt,
-		Args:        journalArgs(args),
-		WouldRun:    wouldRun,
-		RootCommand: rootCmd,
-		Suppressed:  journal.SuppressedNone,
+		Action:       action,
+		Status:       journal.StatusAttempt,
+		Args:         journalArgs(args),
+		WouldRun:     wouldRun,
+		RootCommands: rootCmds,
+		Suppressed:   journal.SuppressedNone,
 	})
 
 	cmd := exec.CommandContext(ctx, pkexecPath, fullArgs...)
@@ -203,6 +208,11 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 			status = journal.StatusTimeout
 			classifiedErr = &Error{Message: "command timed out"}
 		} else {
+			// pkexec reports both halves of a denial: 126 when the
+			// authentication dialog is dismissed, 127 when authentication
+			// fails or authorization is refused. Both are "denied" — a
+			// refused authorization journalled as a generic failure would
+			// hide the policy decision that stopped the action.
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) && (exitErr.ExitCode() == 126 || exitErr.ExitCode() == 127) {
 				status = journal.StatusDenied
@@ -213,25 +223,25 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 		// pkexec was spawned, so the audit trail must not claim otherwise,
 		// however the helper's own stderr reads.
 		journal.RecordEntry(journal.Entry{
-			Action:      action,
-			Status:      status,
-			Args:        journalArgs(args),
-			WouldRun:    wouldRun,
-			RootCommand: rootCmd,
-			Suppressed:  journal.SuppressedNone,
-			Error:       classifiedErr.Error(),
+			Action:       action,
+			Status:       status,
+			Args:         journalArgs(args),
+			WouldRun:     wouldRun,
+			RootCommands: rootCmds,
+			Suppressed:   journal.SuppressedNone,
+			Error:        classifiedErr.Error(),
 		})
 		return "", stderr.String(), classifiedErr
 	}
 
 	// Successful execution
 	journal.RecordEntry(journal.Entry{
-		Action:      action,
-		Status:      journal.StatusSuccess,
-		Args:        journalArgs(args),
-		WouldRun:    wouldRun,
-		RootCommand: rootCmd,
-		Suppressed:  journal.SuppressedNone,
+		Action:       action,
+		Status:       journal.StatusSuccess,
+		Args:         journalArgs(args),
+		WouldRun:     wouldRun,
+		RootCommands: rootCmds,
+		Suppressed:   journal.SuppressedNone,
 	})
 
 	return stdout.String(), stderr.String(), nil

@@ -190,8 +190,8 @@ func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
 	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
 	fakePkexec := writeFakePkexec(t, capturedArgsFile)
 
-	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
-	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
+	wantRootCmds := [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}}
+	registerResolver(t, "chairlift-example-helper", func([]string) ([][]string, error) { return wantRootCmds, nil })
 
 	helperPath := "/usr/bin/chairlift-example-helper"
 	if _, _, err := Run(context.Background(), fakePkexec, helperPath, "channel-switch", "testing"); err != nil {
@@ -215,8 +215,8 @@ func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
 	if !reflect.DeepEqual(attempt.WouldRun, wantWouldRun) {
 		t.Errorf("attempt WouldRun = %v, want %v", attempt.WouldRun, wantWouldRun)
 	}
-	if !reflect.DeepEqual(attempt.RootCommand, wantRootCmd) {
-		t.Errorf("attempt RootCommand = %v, want %v", attempt.RootCommand, wantRootCmd)
+	if !reflect.DeepEqual(attempt.RootCommands, wantRootCmds) {
+		t.Errorf("attempt RootCommands = %v, want %v", attempt.RootCommands, wantRootCmds)
 	}
 
 	success := entries[1]
@@ -226,8 +226,8 @@ func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
 	if success.Suppressed != journal.SuppressedNone {
 		t.Errorf("success suppressed = %q, want %q", success.Suppressed, journal.SuppressedNone)
 	}
-	if !reflect.DeepEqual(success.RootCommand, wantRootCmd) {
-		t.Errorf("success RootCommand = %v, want %v", success.RootCommand, wantRootCmd)
+	if !reflect.DeepEqual(success.RootCommands, wantRootCmds) {
+		t.Errorf("success RootCommands = %v, want %v", success.RootCommands, wantRootCmds)
 	}
 }
 
@@ -245,8 +245,8 @@ func TestRunJournalsPolicyKitDenied(t *testing.T) {
 				t.Fatalf("writing denied pkexec: %v", err)
 			}
 
-			wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
-			registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
+			wantRootCmds := [][]string{{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}}
+			registerResolver(t, "chairlift-example-helper", func([]string) ([][]string, error) { return wantRootCmds, nil })
 
 			helperPath := "/usr/bin/chairlift-example-helper"
 			_, _, err := Run(context.Background(), deniedScript, helperPath, "channel-switch", "testing")
@@ -273,8 +273,8 @@ func TestRunJournalsPolicyKitDenied(t *testing.T) {
 			if !strings.Contains(denied.Error, fmt.Sprintf("%d", exitCode)) {
 				t.Errorf("entry 1 error = %q, want exit %d", denied.Error, exitCode)
 			}
-			if !reflect.DeepEqual(denied.RootCommand, wantRootCmd) {
-				t.Errorf("entry 1 RootCommand = %v, want %v", denied.RootCommand, wantRootCmd)
+			if !reflect.DeepEqual(denied.RootCommands, wantRootCmds) {
+				t.Errorf("entry 1 RootCommands = %v, want %v", denied.RootCommands, wantRootCmds)
 			}
 		})
 	}
@@ -294,8 +294,8 @@ func TestRunJournalsTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
-	wantRootCmd := []string{"systemctl", "reboot"}
-	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
+	wantRootCmds := [][]string{{"systemctl", "reboot"}}
+	registerResolver(t, "chairlift-example-helper", func([]string) ([][]string, error) { return wantRootCmds, nil })
 
 	helperPath := "/usr/bin/chairlift-example-helper"
 	_, _, err := Run(ctx, hangingScript, helperPath, "restart")
@@ -318,8 +318,8 @@ func TestRunJournalsTimeout(t *testing.T) {
 	if timeoutEntry.Error != "command timed out" {
 		t.Errorf("entry 1 error = %q, want command timed out", timeoutEntry.Error)
 	}
-	if !reflect.DeepEqual(timeoutEntry.RootCommand, wantRootCmd) {
-		t.Errorf("entry 1 RootCommand = %v, want %v", timeoutEntry.RootCommand, wantRootCmd)
+	if !reflect.DeepEqual(timeoutEntry.RootCommands, wantRootCmds) {
+		t.Errorf("entry 1 RootCommands = %v, want %v", timeoutEntry.RootCommands, wantRootCmds)
 	}
 }
 
@@ -377,7 +377,7 @@ func TestRunRefusesBeforeDispatch(t *testing.T) {
 	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
 	fakePkexec := writeFakePkexec(t, capturedArgsFile)
 
-	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) {
+	registerResolver(t, "chairlift-example-helper", func([]string) ([][]string, error) {
 		return nil, &RefusalError{Message: `no testing image is defined for the running tag "20260817"`}
 	})
 
@@ -407,8 +407,8 @@ func TestRunRefusesBeforeDispatch(t *testing.T) {
 	if refused.Suppressed != journal.SuppressedRefused {
 		t.Errorf("refused suppressed = %q, want %q", refused.Suppressed, journal.SuppressedRefused)
 	}
-	if len(refused.RootCommand) != 0 {
-		t.Errorf("refused RootCommand = %v, want none: no command was built", refused.RootCommand)
+	if len(refused.RootCommands) != 0 {
+		t.Errorf("refused RootCommands = %v, want none: no command was built", refused.RootCommands)
 	}
 	if !strings.Contains(refused.Error, "no testing image is defined") {
 		t.Errorf("refused error = %q, want explanation", refused.Error)
@@ -427,7 +427,7 @@ func TestRunRefusesBeforeDispatchUnderDryRun(t *testing.T) {
 	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
 	fakePkexec := writeFakePkexec(t, capturedArgsFile)
 
-	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) {
+	registerResolver(t, "chairlift-example-helper", func([]string) ([][]string, error) {
 		return nil, &RefusalError{Message: `no testing image is defined for the running tag "20260817"`}
 	})
 
@@ -457,8 +457,8 @@ func TestRunRefusesBeforeDispatchUnderDryRun(t *testing.T) {
 	if refused.Suppressed != journal.SuppressedRefused {
 		t.Errorf("refused suppressed = %q, want %q", refused.Suppressed, journal.SuppressedRefused)
 	}
-	if len(refused.RootCommand) != 0 {
-		t.Errorf("refused RootCommand = %v, want none: no command was built", refused.RootCommand)
+	if len(refused.RootCommands) != 0 {
+		t.Errorf("refused RootCommands = %v, want none: no command was built", refused.RootCommands)
 	}
 	if !strings.Contains(refused.Error, "no testing image is defined") {
 		t.Errorf("refused error = %q, want explanation", refused.Error)

@@ -176,7 +176,7 @@ A repository administrator must configure the `ANTHROPIC_API_KEY` Actions
 secret before the first review:
 
 ```bash
-gh secret set ANTHROPIC_API_KEY --repo frostyard/chairlift
+gh secret set ANTHROPIC_API_KEY --repo projectbluefin/chairlift
 ```
 
 Until the secret exists, a dispatch records a notice and exits without

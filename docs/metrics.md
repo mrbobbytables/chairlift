@@ -38,7 +38,7 @@ The following command queries GitHub directly and calculates the current
 since="$(date -u -d '90 days ago' +%F)"
 
 gh pr list \
-  --repo frostyard/chairlift \
+  --repo projectbluefin/chairlift \
   --state closed \
   --search "closed:>=$since" \
   --limit 1000 \

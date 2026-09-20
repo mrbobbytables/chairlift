@@ -16,7 +16,7 @@ definitions instead of committing snapshots that become stale.
 The [quality dashboard](../quality.md) explains what each signal establishes,
 which checks are enforced, and the limitations of the coverage and artifact
 feeds. GitHub also exposes the underlying public repository data through its
-[REST API](https://api.github.com/repos/frostyard/chairlift); authenticated
+[REST API](https://api.github.com/repos/projectbluefin/chairlift); authenticated
 queries are recommended for higher rate limits.
 
 ## Agent observability boundary

@@ -108,12 +108,36 @@ func TestCurrentDocumentationMatchesSourceFacts(t *testing.T) {
 			"actions/workflows/test.yml",
 			"actions/workflows/nightly-compliance.yml",
 			"app.codecov.io/gh/projectbluefin/chairlift",
+			"https://api.github.com/repos/projectbluefin/chairlift",
 			"does not currently attach a reliable provenance marker",
 			"does not collect application usage telemetry",
 		} {
 			if !strings.Contains(catalog, required) {
 				t.Errorf("docs/metrics/README.md does not contain %q", required)
 			}
+		}
+	})
+
+	t.Run("operational commands target canonical repo", func(t *testing.T) {
+		metricsDoc := readRepoFile(t, filepath.Join("docs", "metrics.md"))
+		if !strings.Contains(metricsDoc, "--repo projectbluefin/chairlift") {
+			t.Error("docs/metrics.md does not target projectbluefin/chairlift")
+		}
+		if strings.Contains(metricsDoc, "frostyard/chairlift") {
+			t.Error("docs/metrics.md still references frostyard/chairlift")
+		}
+
+		qualityDoc := readRepoFile(t, filepath.Join("docs", "quality.md"))
+		if !strings.Contains(qualityDoc, "gh secret set ANTHROPIC_API_KEY --repo projectbluefin/chairlift") {
+			t.Error("docs/quality.md does not target projectbluefin/chairlift for ANTHROPIC_API_KEY secret")
+		}
+		if strings.Contains(qualityDoc, "--repo frostyard/chairlift") {
+			t.Error("docs/quality.md still references --repo frostyard/chairlift")
+		}
+
+		metricsReadme := readRepoFile(t, filepath.Join("docs", "metrics", "README.md"))
+		if strings.Contains(metricsReadme, "frostyard/chairlift") {
+			t.Error("docs/metrics/README.md still references frostyard/chairlift")
 		}
 	})
 

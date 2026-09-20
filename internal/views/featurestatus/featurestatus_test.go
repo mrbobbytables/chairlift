@@ -439,14 +439,6 @@ func TestGroupDescriptionIncompletePlural(t *testing.T) {
 	}
 }
 
-func TestGroupDescriptionCheckIncompleteConvenience(t *testing.T) {
-	got := GroupDescriptionCheckIncomplete(9)
-	want := GroupDescriptionIncomplete(9, 0)
-	if got != want {
-		t.Errorf("GroupDescriptionCheckIncomplete(9) = %q, want %q", got, want)
-	}
-}
-
 func TestGroupDescriptionsAreDistinct(t *testing.T) {
 	descriptions := map[string]string{
 		"failed":                GroupDescriptionCheckFailed(9),

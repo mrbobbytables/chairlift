@@ -61,9 +61,17 @@ var (
 
 func getClient() *updexapi.Client {
 	clientOnce.Do(func() {
-		apiClient = updexapi.NewClient(updexapi.ClientConfig{})
+		apiClient = newClient(updexapi.ClientConfig{})
 	})
 	return apiClient
+}
+
+// newClient is the single construction site for updex API clients. The
+// singleton above serves every wrapper that needs no per-call state; callers
+// that must supply one (featuresChecker's progress reporter) build their own
+// client through this function so the two sites cannot drift.
+func newClient(cfg updexapi.ClientConfig) *updexapi.Client {
+	return updexapi.NewClient(cfg)
 }
 
 // featuresLister is an unexported injection seam for feature listing, allowing
@@ -127,10 +135,12 @@ func (r *warningCapturingReporter) Warnings() []string {
 
 // featuresChecker is an unexported injection seam for feature update checking,
 // allowing check behavior (checks, warnings, error) to be tested without
-// relying on host system definitions or network access.
+// relying on host system definitions or network access. It cannot use the
+// getClient singleton: the warning-capturing reporter is per-call state, so the
+// client carrying it must be too. It still constructs through newClient.
 var featuresChecker = func(ctx context.Context) ([]FeatureCheck, []string, error) {
 	rep := &warningCapturingReporter{}
-	client := updexapi.NewClient(updexapi.ClientConfig{Progress: rep})
+	client := newClient(updexapi.ClientConfig{Progress: rep})
 	checks, err := client.CheckFeatures(ctx, updexapi.CheckFeaturesOptions{})
 	if err != nil {
 		return nil, rep.Warnings(), &Error{Message: fmt.Sprintf("failed to check features: %v", err)}

@@ -155,16 +155,18 @@ func (uh *UserHome) checkFeatureUpdates(totalFeatures int) {
 	checks, warnings, err := updex.CheckFeatures(ctx)
 
 	sgtk.RunOnMainThread(func() {
+		// Warnings are retained even when the check fails, so they are logged
+		// before the error path returns rather than discarded with it.
+		for _, w := range warnings {
+			log.Printf("Feature update check warning: %s", w)
+		}
+
 		if err != nil {
 			log.Printf("Feature update check failed: %v", err)
 			if uh.featuresGroup != nil {
 				uh.featuresGroup.SetDescription(featurestatus.GroupDescriptionCheckFailed(totalFeatures))
 			}
 			return
-		}
-
-		for _, w := range warnings {
-			log.Printf("Feature update check warning: %s", w)
 		}
 
 		incomplete := len(warnings) > 0

@@ -231,6 +231,8 @@ func TestUpdexAvailabilityRequiresNonEmptyFeatures(t *testing.T) {
 			t.Fatal("IsInstalled() = false with non-empty features, want true")
 		}
 	})
+}
+
 func TestCheckFeaturesReturnsResultsAndRetainsWarnings(t *testing.T) {
 	origChecker := featuresChecker
 	t.Cleanup(func() { featuresChecker = origChecker })

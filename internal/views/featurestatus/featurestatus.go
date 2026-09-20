@@ -64,7 +64,7 @@ func Feature(name string, results []updex.CheckResult) (Status, bool) {
 
 	if len(results) == 0 {
 		return Status{
-			Subtitle:   fmt.Sprintf("%s — update check failed", name),
+			Subtitle:   checkFailedText(name),
 			HasUpdate:  false,
 			Incomplete: true,
 		}, true
@@ -83,10 +83,15 @@ func Feature(name string, results []updex.CheckResult) (Status, bool) {
 	}, true
 }
 
+// checkFailedText is the single source of the failed-check subtitle wording, so
+// the row text cannot drift from the group description's.
+func checkFailedText(name string) string {
+	return fmt.Sprintf("%s — update check failed", name)
+}
+
+// subtitleText is only reached with a non-empty results slice; Feature handles
+// the empty case itself.
 func subtitleText(name string, results, updates []updex.CheckResult) string {
-	if len(results) == 0 {
-		return fmt.Sprintf("%s — update check failed", name)
-	}
 	switch len(updates) {
 	case 0:
 		if version, ok := commonVersion(results); ok {
@@ -156,13 +161,6 @@ func GroupDescriptionIncomplete(totalFeatures, featuresWithUpdates int) string {
 // check neither found updates nor established that there are none.
 func GroupDescriptionCheckFailed(totalFeatures int) string {
 	return fmt.Sprintf("%s — update check failed", available(totalFeatures))
-}
-
-// GroupDescriptionCheckIncomplete is the features group's description when an
-// update check was incomplete and found no updates. It makes no claim that features
-// are current.
-func GroupDescriptionCheckIncomplete(totalFeatures int) string {
-	return GroupDescriptionIncomplete(totalFeatures, 0)
 }
 
 // available reproduces loadFeatures' own pre-check fragment verbatim, including

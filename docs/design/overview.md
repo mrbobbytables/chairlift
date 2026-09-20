@@ -1189,7 +1189,7 @@ entry. Each entry carries:
 | `status` | `attempt`, `success`, `failure`, `denied`, `timeout`, `refused`, or `dry-run` |
 | `suppressed` | `no` (something was dispatched), `dry-run` (short-circuited before pkexec), `refused` (ChairLift declined to build a command, so nothing was dispatched) |
 | `would_run` | the argv a real run executes, verbatim |
-| `root_command` | the concrete privileged command the helper is expected to run, e.g. `bootc switch --enforce-container-sigpolicy …` |
+| `root_command` | the concrete privileged command the helper is expected to run, e.g. `bootc switch --enforce-container-sigpolicy …` (or the primary/first command for multi-command helper actions) |
 | `error` | the failure or refusal message, when there is one |
 
 `suppressed` and `status` answer different questions and must not be

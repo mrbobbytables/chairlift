@@ -139,24 +139,6 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 
 	rootCmd, resolveErr := resolveRootCommand(helperPath, args)
 
-	if dryrun.Enabled() {
-		// Journal Args must reflect the caller's actual inputs, so build the
-		// --dry-run-appended argv in a separate slice rather than mutating
-		// args (which journalArgs(args) below still reads unmodified).
-		dryRunArgs := append(append([]string{}, args...), "--dry-run")
-		wouldRun := append([]string{pkexecPath, helperPath}, dryRunArgs...)
-		journal.RecordEntry(journal.Entry{
-			Action:      action,
-			Status:      journal.StatusDryRun,
-			Args:        journalArgs(args),
-			WouldRun:    wouldRun,
-			RootCommand: rootCmd,
-			Suppressed:  journal.SuppressedDryRun,
-		})
-		log.Printf("[DRY-RUN] would execute: %s %s %v", pkexecPath, helperPath, dryRunArgs)
-		return "", "", nil
-	}
-
 	fullArgs := append([]string{helperPath}, args...)
 	wouldRun := append([]string{pkexecPath}, fullArgs...)
 
@@ -172,6 +154,24 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 		})
 		log.Printf("refusing %s %s: %s", path.Base(helperPath), action, refusal.Message)
 		return "", refusal.Message, &Error{Message: refusal.Message}
+	}
+
+	if dryrun.Enabled() {
+		// Journal Args must reflect the caller's actual inputs, so build the
+		// --dry-run-appended argv in a separate slice rather than mutating
+		// args (which journalArgs(args) below still reads unmodified).
+		dryRunArgs := append(append([]string{}, args...), "--dry-run")
+		wouldRunDry := append([]string{pkexecPath, helperPath}, dryRunArgs...)
+		journal.RecordEntry(journal.Entry{
+			Action:      action,
+			Status:      journal.StatusDryRun,
+			Args:        journalArgs(args),
+			WouldRun:    wouldRunDry,
+			RootCommand: rootCmd,
+			Suppressed:  journal.SuppressedDryRun,
+		})
+		log.Printf("[DRY-RUN] would execute: %s %s %v", pkexecPath, helperPath, dryRunArgs)
+		return "", "", nil
 	}
 
 	// Record attempt before dispatch
@@ -204,7 +204,7 @@ func Run(ctx context.Context, pkexecPath, helperPath string, args ...string) (st
 			classifiedErr = &Error{Message: "command timed out"}
 		} else {
 			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) && exitErr.ExitCode() == 126 {
+			if errors.As(err, &exitErr) && (exitErr.ExitCode() == 126 || exitErr.ExitCode() == 127) {
 				status = journal.StatusDenied
 			}
 			classifiedErr = classifyFailure(err, helperPath, stderr.String())

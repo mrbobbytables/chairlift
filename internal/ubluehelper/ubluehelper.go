@@ -383,7 +383,9 @@ func detectInfo() (imageinfo.Info, error) {
 }
 
 // ResolveRootCommand resolves the concrete root command the helper is
-// expected to execute for the given helper arguments. It returns
+// expected to execute for the given helper arguments. For multi-command helper
+// actions (such as developer-mode group membership changes or automatic-update
+// timer enablement), it resolves the primary or initial root command. It returns
 // *RefusalError when the command cannot be executed due to an unswitchable
 // channel or unpublished driver image.
 //

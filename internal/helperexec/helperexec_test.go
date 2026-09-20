@@ -232,46 +232,51 @@ func TestRunJournalsAttemptAndSuccessOutcome(t *testing.T) {
 }
 
 func TestRunJournalsPolicyKitDenied(t *testing.T) {
-	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
-	t.Setenv(journal.PathEnv, journalPath)
-	journal.Reset()
-	t.Cleanup(journal.Reset)
+	for _, exitCode := range []int{126, 127} {
+		t.Run(fmt.Sprintf("exit-%d", exitCode), func(t *testing.T) {
+			journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+			t.Setenv(journal.PathEnv, journalPath)
+			journal.Reset()
+			t.Cleanup(journal.Reset)
 
-	deniedScript := filepath.Join(t.TempDir(), "denied-pkexec")
-	if err := os.WriteFile(deniedScript, []byte("#!/bin/sh\necho 'dismissed' >&2\nexit 126\n"), 0o755); err != nil {
-		t.Fatalf("writing denied pkexec: %v", err)
-	}
+			deniedScript := filepath.Join(t.TempDir(), "denied-pkexec")
+			script := fmt.Sprintf("#!/bin/sh\necho 'auth refused or dismissed' >&2\nexit %d\n", exitCode)
+			if err := os.WriteFile(deniedScript, []byte(script), 0o755); err != nil {
+				t.Fatalf("writing denied pkexec: %v", err)
+			}
 
-	wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
-	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
+			wantRootCmd := []string{"bootc", "switch", "--enforce-container-sigpolicy", "ghcr.io/projectbluefin/dakota:testing"}
+			registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) { return wantRootCmd, nil })
 
-	helperPath := "/usr/bin/chairlift-example-helper"
-	_, _, err := Run(context.Background(), deniedScript, helperPath, "channel-switch", "testing")
-	if err == nil {
-		t.Fatal("Run error = nil, want error for exit 126")
-	}
+			helperPath := "/usr/bin/chairlift-example-helper"
+			_, _, err := Run(context.Background(), deniedScript, helperPath, "channel-switch", "testing")
+			if err == nil {
+				t.Fatalf("Run error = nil, want error for exit %d", exitCode)
+			}
 
-	entries := readJournal(t, journalPath)
-	if len(entries) != 2 {
-		t.Fatalf("journal has %d entries, want 2", len(entries))
-	}
+			entries := readJournal(t, journalPath)
+			if len(entries) != 2 {
+				t.Fatalf("journal has %d entries, want 2", len(entries))
+			}
 
-	if entries[0].Status != journal.StatusAttempt {
-		t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
-	}
+			if entries[0].Status != journal.StatusAttempt {
+				t.Errorf("entry 0 status = %q, want %q", entries[0].Status, journal.StatusAttempt)
+			}
 
-	denied := entries[1]
-	if denied.Status != journal.StatusDenied {
-		t.Errorf("entry 1 status = %q, want %q", denied.Status, journal.StatusDenied)
-	}
-	if denied.Suppressed != journal.SuppressedNone {
-		t.Errorf("entry 1 suppressed = %q, want %q", denied.Suppressed, journal.SuppressedNone)
-	}
-	if !strings.Contains(denied.Error, "126") {
-		t.Errorf("entry 1 error = %q, want exit 126", denied.Error)
-	}
-	if !reflect.DeepEqual(denied.RootCommand, wantRootCmd) {
-		t.Errorf("entry 1 RootCommand = %v, want %v", denied.RootCommand, wantRootCmd)
+			denied := entries[1]
+			if denied.Status != journal.StatusDenied {
+				t.Errorf("entry 1 status = %q, want %q", denied.Status, journal.StatusDenied)
+			}
+			if denied.Suppressed != journal.SuppressedNone {
+				t.Errorf("entry 1 suppressed = %q, want %q", denied.Suppressed, journal.SuppressedNone)
+			}
+			if !strings.Contains(denied.Error, fmt.Sprintf("%d", exitCode)) {
+				t.Errorf("entry 1 error = %q, want exit %d", denied.Error, exitCode)
+			}
+			if !reflect.DeepEqual(denied.RootCommand, wantRootCmd) {
+				t.Errorf("entry 1 RootCommand = %v, want %v", denied.RootCommand, wantRootCmd)
+			}
+		})
 	}
 }
 
@@ -394,6 +399,56 @@ func TestRunRefusesBeforeDispatch(t *testing.T) {
 	entries := readJournal(t, journalPath)
 	if len(entries) != 1 {
 		t.Fatalf("journal has %d entries, want 1 (refusal only, no attempt)", len(entries))
+	}
+	refused := entries[0]
+	if refused.Status != journal.StatusRefused {
+		t.Errorf("refused status = %q, want %q", refused.Status, journal.StatusRefused)
+	}
+	if refused.Suppressed != journal.SuppressedRefused {
+		t.Errorf("refused suppressed = %q, want %q", refused.Suppressed, journal.SuppressedRefused)
+	}
+	if len(refused.RootCommand) != 0 {
+		t.Errorf("refused RootCommand = %v, want none: no command was built", refused.RootCommand)
+	}
+	if !strings.Contains(refused.Error, "no testing image is defined") {
+		t.Errorf("refused error = %q, want explanation", refused.Error)
+	}
+}
+
+func TestRunRefusesBeforeDispatchUnderDryRun(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.jsonl")
+	t.Setenv(journal.PathEnv, journalPath)
+	journal.Reset()
+	t.Cleanup(journal.Reset)
+
+	dryrun.Set(true)
+	t.Cleanup(func() { dryrun.Set(false) })
+
+	capturedArgsFile := filepath.Join(t.TempDir(), "captured-args")
+	fakePkexec := writeFakePkexec(t, capturedArgsFile)
+
+	registerResolver(t, "chairlift-example-helper", func([]string) ([]string, error) {
+		return nil, &RefusalError{Message: `no testing image is defined for the running tag "20260817"`}
+	})
+
+	helperPath := "/usr/bin/chairlift-example-helper"
+	_, stderr, err := Run(context.Background(), fakePkexec, helperPath, "channel-switch", "testing")
+	if err == nil {
+		t.Fatal("Run error = nil, want refusal error under dry-run")
+	}
+	if !strings.Contains(err.Error(), "no testing image is defined") {
+		t.Errorf("Run error = %q, want the refusal explanation", err.Error())
+	}
+	if !strings.Contains(stderr, "no testing image is defined") {
+		t.Errorf("Run stderr = %q, want the refusal explanation", stderr)
+	}
+	if _, statErr := os.Stat(capturedArgsFile); statErr == nil {
+		t.Fatal("pkexec was dispatched for a refused action; a refusal must never reach pkexec")
+	}
+
+	entries := readJournal(t, journalPath)
+	if len(entries) != 1 {
+		t.Fatalf("journal has %d entries, want 1 (refusal only, no attempt/dry-run)", len(entries))
 	}
 	refused := entries[0]
 	if refused.Status != journal.StatusRefused {

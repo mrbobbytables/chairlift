@@ -100,6 +100,9 @@ type Entry struct {
 	// prediction of the helper's own resolution rather than a report of it.
 	// The two agree unless the descriptor changes between resolution and
 	// dispatch; only the root helper's resolution is authoritative.
+	// For multi-command helper actions (such as developer-mode group
+	// modifications or automatic-update timer enablement), RootCommand
+	// records the primary or first command invoked by the helper.
 	RootCommand []string `json:"root_command,omitempty"`
 	// Suppressed records whether the action ran.
 	Suppressed Suppression `json:"suppressed"`

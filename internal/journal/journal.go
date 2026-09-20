@@ -158,7 +158,7 @@ func RecordEntry(entry Entry) {
 		case SuppressedRefused:
 			entry.Status = StatusRefused
 		default:
-			entry.Status = StatusSuccess
+			entry.Status = StatusAttempt
 		}
 	}
 

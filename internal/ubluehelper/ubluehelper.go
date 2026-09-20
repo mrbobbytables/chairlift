@@ -346,7 +346,7 @@ func (e *RefusalError) Error() string {
 	return e.Message
 }
 
-var detectImageInfo func() (imageinfo.Info, error)
+var detectImageInfo = imageinfo.Detect
 
 // SetDetectInfo replaces the image detection function for tests. It returns a cleanup function.
 func SetDetectInfo(fn func() (imageinfo.Info, error)) func() {
@@ -366,9 +366,6 @@ func ResolveRootCommand(args []string) ([]string, error) {
 
 	switch inv.Command {
 	case CommandChannelSwitch:
-		if detectImageInfo == nil {
-			return nil, nil
-		}
 		info, err := detectImageInfo()
 		if err != nil {
 			return nil, nil
@@ -383,9 +380,6 @@ func ResolveRootCommand(args []string) ([]string, error) {
 		return append([]string{"bootc"}, sArgs...), nil
 
 	case CommandDriverSwitch:
-		if detectImageInfo == nil {
-			return nil, nil
-		}
 		info, err := detectImageInfo()
 		if err != nil {
 			return nil, nil

@@ -88,8 +88,8 @@ type Entry struct {
 	// command rather than re-deriving it in a test is the whole point: the
 	// assertion then checks the command ChairLift actually assembled.
 	WouldRun []string `json:"would_run,omitempty"`
-	// RootCommand is the concrete privileged command selected inside the helper
-	// (e.g. `bootc switch --enforce-container-sigpolicy <target>`).
+	// RootCommand is the expected concrete privileged command resolved for
+	// the helper action (e.g. `bootc switch --enforce-container-sigpolicy <target>`).
 	RootCommand []string `json:"root_command,omitempty"`
 	// Suppressed records whether the action ran.
 	Suppressed Suppression `json:"suppressed"`

@@ -68,7 +68,6 @@ type UserHome struct {
 	searchResultRows       rowset.Tracker[*adw.ActionRow]
 	brewBundlesGroup       *adw.PreferencesGroup
 	brewBundleRows         map[string]*bundleRowWidgets
-	brewBundlesPlaceholder *adw.ActionRow
 	brewTrustGroup         *adw.PreferencesGroup
 	brewTrustRows          map[string]*adw.ActionRow
 	outdatedRows           rowset.Tracker[*adw.ActionRow]

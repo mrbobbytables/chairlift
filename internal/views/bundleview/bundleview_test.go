@@ -142,6 +142,34 @@ func TestGateResetAndCompletion(t *testing.T) {
 	}
 }
 
+func TestGateCompleteClosesAnIdleGate(t *testing.T) {
+	var gate InstallGate
+	gate.Complete()
+	if gate.TryStart() {
+		t.Fatal("gate completed while idle still started")
+	}
+	if gate.IsIdle() {
+		t.Fatal("completed gate reported idle")
+	}
+}
+
+func TestGateIsIdle(t *testing.T) {
+	var gate InstallGate
+	if !gate.IsIdle() {
+		t.Fatal("zero-value gate did not report idle")
+	}
+	if !gate.TryStart() {
+		t.Fatal("zero-value gate did not start")
+	}
+	if gate.IsIdle() {
+		t.Fatal("running gate reported idle")
+	}
+	gate.Reset()
+	if !gate.IsIdle() {
+		t.Fatal("reset gate did not report idle")
+	}
+}
+
 func TestRowActionReflectsStatusAndHomebrew(t *testing.T) {
 	cases := []struct {
 		name              string

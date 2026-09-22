@@ -75,9 +75,16 @@ func (g *InstallGate) Reset() {
 	g.state.CompareAndSwap(gateRunning, gateIdle)
 }
 
-// Complete permanently closes a successfully installed bundle action.
+// Complete permanently closes a bundle action, whether it was started by this
+// process or the bundle was already installed when its row was built.
 func (g *InstallGate) Complete() {
-	g.state.CompareAndSwap(gateRunning, gateComplete)
+	g.state.Store(gateComplete)
+}
+
+// IsIdle reports whether no action has been started and none has completed,
+// meaning the row's action control is safe to re-derive from a fresh status.
+func (g *InstallGate) IsIdle() bool {
+	return g.state.Load() == gateIdle
 }
 
 // RowState represents the UI presentation and state of a bundle row's action control.

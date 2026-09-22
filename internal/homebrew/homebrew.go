@@ -142,9 +142,9 @@ func isStateChanging(args []string) bool {
 			switch arg {
 			case "check", "list":
 				return false
-			case "install", "dump":
-				return true
 			default:
+				// install, dump, and any unrecognized subcommand are
+				// treated as state-changing.
 				return true
 			}
 		}
@@ -577,7 +577,6 @@ const (
 	BundleUpdateAvailable BundleStatus = "update_available"
 	BundleNotInstalled    BundleStatus = "not_installed"
 	BundleIndeterminate   BundleStatus = "indeterminate"
-	BundleError           BundleStatus = BundleIndeterminate
 )
 
 // DisplayName returns a human-readable representation of the bundle status.

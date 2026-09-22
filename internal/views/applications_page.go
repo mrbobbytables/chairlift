@@ -181,8 +181,9 @@ func (uh *UserHome) buildApplicationsPage() {
 }
 
 // loadBrewBundles discovers configured Brewfiles on a worker goroutine and
-// builds all bundle rows on GTK's main thread.
+// builds or updates bundle rows on GTK's main thread.
 func (uh *UserHome) loadBrewBundles(paths []string) {
+	generation := uh.brewBundlesRefresh.Begin()
 	bundles, discoveryErr := homebrew.AvailableBundles(paths)
 	homebrewAvailable := homebrew.IsInstalledCached()
 	warning := ""
@@ -192,35 +193,96 @@ func (uh *UserHome) loadBrewBundles(paths []string) {
 	}
 	presentation := bundleview.Present(len(bundles), warning, homebrewAvailable)
 
+	statuses := make(map[string]homebrew.BundleStatus, len(bundles))
+	if homebrewAvailable {
+		for _, bundle := range bundles {
+			if !uh.brewBundlesRefresh.IsCurrent(generation) {
+				return
+			}
+			status, err := homebrew.BundleCheck(bundle.Path)
+			if err != nil {
+				log.Printf("Error checking Brew bundle %s: %v", bundle.Path, err)
+			}
+			statuses[bundle.Path] = status
+		}
+	}
+
 	sgtk.RunOnMainThread(func() {
+		if !uh.brewBundlesRefresh.IsCurrent(generation) {
+			return
+		}
 		if uh.brewBundlesGroup == nil {
 			return
 		}
 		uh.brewBundlesGroup.SetDescription(presentation.Description)
 
 		if len(bundles) == 0 {
-			row := adw.NewActionRow()
-			row.SetTitle(presentation.PlaceholderTitle)
-			row.SetSubtitle(presentation.PlaceholderSubtitle)
-			uh.brewBundlesGroup.Add(&row.Widget)
+			for path, widgets := range uh.brewBundleRows {
+				uh.brewBundlesGroup.Remove(&widgets.row.Widget)
+				delete(uh.brewBundleRows, path)
+			}
+			if uh.brewBundlesPlaceholder == nil {
+				row := adw.NewActionRow()
+				row.SetTitle(presentation.PlaceholderTitle)
+				row.SetSubtitle(presentation.PlaceholderSubtitle)
+				uh.brewBundlesPlaceholder = row
+				uh.brewBundlesGroup.Add(&row.Widget)
+			} else {
+				uh.brewBundlesPlaceholder.SetTitle(presentation.PlaceholderTitle)
+				uh.brewBundlesPlaceholder.SetSubtitle(presentation.PlaceholderSubtitle)
+			}
 			return
 		}
 
+		if uh.brewBundlesPlaceholder != nil {
+			uh.brewBundlesGroup.Remove(&uh.brewBundlesPlaceholder.Widget)
+			uh.brewBundlesPlaceholder = nil
+		}
+
+		if uh.brewBundleRows == nil {
+			uh.brewBundleRows = make(map[string]*bundleRowWidgets)
+		}
+
+		activePaths := make(map[string]bool, len(bundles))
 		for _, bundle := range bundles {
+			activePaths[bundle.Path] = true
 			presentation := pageview.BrewBundle(bundle.Name, bundle.Description, bundle.Path)
+			rowAction := bundleview.RowAction(statuses[bundle.Path], homebrewAvailable)
+
+			if widgets, exists := uh.brewBundleRows[bundle.Path]; exists {
+				widgets.row.SetTitle(presentation.Title)
+				widgets.row.SetSubtitle(presentation.Subtitle)
+				widgets.btn.SetLabel(rowAction.Label)
+				widgets.btn.SetSensitive(rowAction.Sensitive)
+				if !homebrewAvailable {
+					widgets.btn.SetTooltipText("Homebrew is not installed")
+				} else {
+					widgets.btn.SetTooltipText("")
+				}
+				if rowAction.Completed {
+					widgets.gate.Complete()
+				} else {
+					widgets.gate.Reset()
+				}
+				continue
+			}
+
 			row := adw.NewActionRow()
 			row.SetTitle(presentation.Title)
 			row.SetSubtitle(presentation.Subtitle)
 
-			installBtn := gtk.NewButtonWithLabel("Install")
+			installBtn := gtk.NewButtonWithLabel(rowAction.Label)
 			installBtn.SetValign(gtk.AlignCenterValue)
 			installBtn.AddCssClass("suggested-action")
-			installBtn.SetSensitive(homebrewAvailable)
+			installBtn.SetSensitive(rowAction.Sensitive)
 			if !homebrewAvailable {
 				installBtn.SetTooltipText("Homebrew is not installed")
 			}
 
 			gate := &bundleview.InstallGate{}
+			if rowAction.Completed {
+				gate.Complete()
+			}
 			bundle := bundle
 			clickedCb := func(btn gtk.Button) {
 				if !gate.TryStart() {
@@ -268,6 +330,19 @@ func (uh *UserHome) loadBrewBundles(paths []string) {
 
 			row.AddSuffix(&installBtn.Widget)
 			uh.brewBundlesGroup.Add(&row.Widget)
+
+			uh.brewBundleRows[bundle.Path] = &bundleRowWidgets{
+				row:  row,
+				btn:  installBtn,
+				gate: gate,
+			}
+		}
+
+		for path, widgets := range uh.brewBundleRows {
+			if !activePaths[path] {
+				uh.brewBundlesGroup.Remove(&widgets.row.Widget)
+				delete(uh.brewBundleRows, path)
+			}
 		}
 	})
 }

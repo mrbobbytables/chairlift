@@ -24,10 +24,21 @@ from atspi_probe import (
     find_application,
     find_sidebar_rows,
     is_selected,
-    name_of,
-    role_of,
 )
 
+
+def name_of(node):
+    try:
+        return node.name or ""
+    except Exception:
+        return ""
+
+
+def role_of(node):
+    try:
+        return node.roleName or ""
+    except Exception:
+        return ""
 
 def is_sensitive(node):
     try:

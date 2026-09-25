@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -106,20 +107,20 @@ func findMaintenanceRecord(records []maintenanceRecord, kind string, matching ma
 // TestParseMaintenanceATSPIRecords validates the AT-SPI record protocol on
 // any host, independent of GTK, Xvfb, or accessibility bus availability.
 func TestParseMaintenanceATSPIRecords(t *testing.T) {
-	pwTitle, _ := pageview.PowerwashConfirmation()
-	frTitle, _ := pageview.FactoryResetConfirmation()
+	pwTitle, pwBody := pageview.PowerwashConfirmation()
+	frTitle, frBody := pageview.FactoryResetConfirmation()
 
 	sampleReport := strings.Join([]string{
 		"PAGE\tname=Maintenance\tselected=1",
 		fmt.Sprintf("BUTTON\tname=%s\trole=push button\tsensitive=1", cleanupview.ButtonLabel),
 		fmt.Sprintf("STATE\tname=%s\tstatus=busy", cleanupview.ButtonLabel),
 		fmt.Sprintf("STATE\tname=%s\tstatus=completed\tsensitive=1", cleanupview.ButtonLabel),
-		"BUTTON\tname=Remove Everything\trole=push button",
-		fmt.Sprintf("DIALOG\ttype=powerwash\ttitle=%s\thas_cancel=1\thas_confirm=1\tbody_valid=1", pwTitle),
+		"BUTTON\tname=Remove…\trole=push button",
+		fmt.Sprintf("DIALOG\ttype=powerwash\ttitle=%s\tbody=%s\thas_cancel=1\thas_confirm=1", pwTitle, pwBody),
 		"DIALOG_CANCELLED\ttype=powerwash\tdismissed=1",
 		"DIALOG_CONFIRMED\ttype=powerwash\tstatus=completed",
-		"BUTTON\tname=Factory Reset\trole=push button",
-		fmt.Sprintf("DIALOG\ttype=factory_reset\ttitle=%s\thas_cancel=1\thas_confirm=1\tbody_valid=1", frTitle),
+		"BUTTON\tname=Reset…\trole=push button",
+		fmt.Sprintf("DIALOG\ttype=factory_reset\ttitle=%s\tbody=%s\thas_cancel=1\thas_confirm=1", frTitle, frBody),
 		"DIALOG_CANCELLED\ttype=factory_reset\tdismissed=1",
 		"DIALOG_CONFIRMED\ttype=factory_reset\tstatus=completed",
 		"DONE",
@@ -168,7 +169,10 @@ func TestParseMaintenanceATSPIRecords(t *testing.T) {
 	if pwDialog.Fields["title"] != pwTitle {
 		t.Errorf("powerwash dialog title = %q, want %q", pwDialog.Fields["title"], pwTitle)
 	}
-	if pwDialog.Fields["has_cancel"] != "1" || pwDialog.Fields["has_confirm"] != "1" || pwDialog.Fields["body_valid"] != "1" {
+	if pwDialog.Fields["body"] != pwBody {
+		t.Errorf("powerwash dialog body = %q, want %q", pwDialog.Fields["body"], pwBody)
+	}
+	if pwDialog.Fields["has_cancel"] != "1" || pwDialog.Fields["has_confirm"] != "1" {
 		t.Errorf("powerwash dialog fields unexpected: %+v", pwDialog.Fields)
 	}
 
@@ -193,7 +197,10 @@ func TestParseMaintenanceATSPIRecords(t *testing.T) {
 	if frDialog.Fields["title"] != frTitle {
 		t.Errorf("factory_reset dialog title = %q, want %q", frDialog.Fields["title"], frTitle)
 	}
-	if frDialog.Fields["has_cancel"] != "1" || frDialog.Fields["has_confirm"] != "1" || frDialog.Fields["body_valid"] != "1" {
+	if frDialog.Fields["body"] != frBody {
+		t.Errorf("factory_reset dialog body = %q, want %q", frDialog.Fields["body"], frBody)
+	}
+	if frDialog.Fields["has_cancel"] != "1" || frDialog.Fields["has_confirm"] != "1" {
 		t.Errorf("factory_reset dialog fields unexpected: %+v", frDialog.Fields)
 	}
 
@@ -275,17 +282,33 @@ func TestParseMaintenanceATSPIRejectsMalformedReports(t *testing.T) {
 // dialogs. When the host lacks the accessibility stack (Xvfb, dbus-run-session,
 // dogtail), it skips gracefully without failing the test suite.
 func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
-	app := filepath.Join(e2eBuildDir(t), "chairlift")
+	root := repoRoot(t)
+	app := filepath.Join(e2eBuildDir(t), "e2e", "chairlift")
+	if _, err := os.Stat(app); err != nil {
+		app = filepath.Join(e2eBuildDir(t), "chairlift")
+	}
 	requireExecutable(t, app)
 
-	script := filepath.Join(repoRoot(t), "test", "e2e", "run_maintenance_atspi.sh")
-	requireExecutable(t, script)
+	runner := filepath.Join(root, "test", "e2e", "run_atspi_navigation.sh")
+	requireExecutable(t, runner)
+
+	probe := filepath.Join(root, "test", "e2e", "maintenance_atspi_probe.py")
+	requireExecutable(t, probe)
+
+	prelaunch := filepath.Join(root, "test", "e2e", "maintenance_prelaunch.sh")
+	requireExecutable(t, prelaunch)
 
 	requireATSPIStack(t)
 
 	outDir := t.TempDir()
-	cmd := exec.Command(script, app, outDir)
-	cmd.Dir = repoRoot(t)
+	cmd := exec.Command(runner, app, outDir, "--probe", probe)
+	cmd.Dir = root
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Env = append(os.Environ(),
+		"CHAIRLIFT_SCHEMA_DIR="+os.Getenv("CHAIRLIFT_SCHEMA_DIR"),
+		"CHAIRLIFT_ATSPI_PRELAUNCH_HOOK="+prelaunch,
+		"CHAIRLIFT_ATSPI_EXTRA_READY_MARKER=views: reset group built",
+	)
 	output := &lockedBuffer{}
 	cmd.Stdout = output
 	cmd.Stderr = output
@@ -326,7 +349,7 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 		t.Errorf("clean up action did not complete back to sensitive state")
 	}
 
-	pwTitle, _ := pageview.PowerwashConfirmation()
+	pwTitle, pwBody := pageview.PowerwashConfirmation()
 	pwDialog, found := findMaintenanceRecord(records, "DIALOG", map[string]string{"type": "powerwash"})
 	if !found {
 		t.Fatalf("powerwash confirmation dialog was not observed")
@@ -334,8 +357,10 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 	if pwDialog.Fields["title"] != pwTitle {
 		t.Errorf("powerwash dialog title = %q, want %q", pwDialog.Fields["title"], pwTitle)
 	}
-	if pwDialog.Fields["body_valid"] != "1" {
-		t.Errorf("powerwash dialog body text did not match expected pageview content")
+	for _, expectedFragment := range []string{"Flatpak", "Distrobox", "cannot be undone"} {
+		if !strings.Contains(pwDialog.Fields["body"], expectedFragment) {
+			t.Errorf("powerwash dialog body %q missing expected fragment %q (expected: %q)", pwDialog.Fields["body"], expectedFragment, pwBody)
+		}
 	}
 
 	if !containsMaintenanceRecord(records, "DIALOG_CANCELLED", map[string]string{"type": "powerwash"}) {
@@ -346,7 +371,7 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 		t.Errorf("powerwash confirmation completion was not observed")
 	}
 
-	frTitle, _ := pageview.FactoryResetConfirmation()
+	frTitle, frBody := pageview.FactoryResetConfirmation()
 	frDialog, found := findMaintenanceRecord(records, "DIALOG", map[string]string{"type": "factory_reset"})
 	if !found {
 		t.Fatalf("factory reset confirmation dialog was not observed")
@@ -354,8 +379,10 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 	if frDialog.Fields["title"] != frTitle {
 		t.Errorf("factory reset dialog title = %q, want %q", frDialog.Fields["title"], frTitle)
 	}
-	if frDialog.Fields["body_valid"] != "1" {
-		t.Errorf("factory reset dialog body text did not match expected pageview content")
+	for _, expectedFragment := range []string{"--experimental", "cannot be undone", "scratch"} {
+		if !strings.Contains(frDialog.Fields["body"], expectedFragment) {
+			t.Errorf("factory reset dialog body %q missing expected fragment %q (expected: %q)", frDialog.Fields["body"], expectedFragment, frBody)
+		}
 	}
 
 	if !containsMaintenanceRecord(records, "DIALOG_CANCELLED", map[string]string{"type": "factory_reset"}) {
@@ -378,7 +405,27 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 	if !strings.Contains(logText, "views: powerwash finished") {
 		t.Errorf("chairlift log missing powerwash execution marker")
 	}
-	if !strings.Contains(logText, "factory-reset") {
-		t.Errorf("chairlift log missing factory reset execution marker")
+
+	// Assert exact dry-run lines
+	const expectedPowerwashDryRun = "[DRY-RUN] Would execute: flatpak uninstall --user --all -y"
+	const expectedFactoryResetDryRun = "[DRY-RUN] would execute: pkexec /usr/bin/chairlift-ublue-helper [factory-reset --dry-run]"
+
+	if !strings.Contains(logText, expectedPowerwashDryRun) {
+		t.Errorf("chairlift log missing expected powerwash dry-run line: %q", expectedPowerwashDryRun)
+	}
+	if !strings.Contains(logText, expectedFactoryResetDryRun) {
+		t.Errorf("chairlift log missing expected factory reset dry-run line: %q", expectedFactoryResetDryRun)
+	}
+
+	// Assert neither dry-run line was logged before confirmation on Cancel
+	pwConfirmIndex := strings.Index(logText, expectedPowerwashDryRun)
+	pwCancelIndex := strings.Index(logText, "views: reset group built") // initial baseline
+	if pwConfirmIndex != -1 && pwConfirmIndex < pwCancelIndex {
+		t.Errorf("powerwash dry-run line was executed prematurely: index %d vs %d", pwConfirmIndex, pwCancelIndex)
+	}
+
+	frConfirmIndex := strings.Index(logText, expectedFactoryResetDryRun)
+	if frConfirmIndex != -1 && pwConfirmIndex != -1 && frConfirmIndex < pwConfirmIndex {
+		t.Errorf("factory reset dry-run line occurred before powerwash: index %d vs %d", frConfirmIndex, pwConfirmIndex)
 	}
 }

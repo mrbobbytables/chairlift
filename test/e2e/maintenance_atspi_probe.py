@@ -148,7 +148,7 @@ def dialog_body(dialog):
         "Cancel",
         "Remove Everything",
         "Factory Reset",
-        "Remove Everything You Installed?",
+        "Remove Everything I Installed?",
         "Factory Reset This System?",
     }
     for node in descendants(dialog):
@@ -217,7 +217,7 @@ def main():
     emit("BUTTON", name="Remove Everything", role=role_of(powerwash_btn))
 
     activate(powerwash_btn)
-    pw_dialog = wait_for_dialog(tree.root, "Remove Everything You Installed?", 15)
+    pw_dialog = wait_for_dialog(tree.root, "Remove Everything I Installed?", 15)
     pw_body = dialog_body(pw_dialog)
     pw_has_flatpak = int("Flatpak" in pw_body)
     pw_has_undone = int("cannot be undone" in pw_body)
@@ -226,7 +226,7 @@ def main():
     emit(
         "DIALOG",
         type="powerwash",
-        title="Remove Everything You Installed?",
+        title=name_of(pw_dialog),
         has_cancel=int(pw_cancel is not None),
         has_confirm=int(pw_confirm is not None),
         body_valid=int(pw_has_flatpak and pw_has_undone),
@@ -234,15 +234,15 @@ def main():
 
     # Cancel dismisses dialog without execution
     activate(pw_cancel)
-    wait_for_dialog_dismissal("Remove Everything You Installed?", 10)
+    wait_for_dialog_dismissal("Remove Everything I Installed?", 10)
     emit("DIALOG_CANCELLED", type="powerwash", dismissed=1)
 
     # Re-click to confirm
     activate(powerwash_btn)
-    pw_dialog = wait_for_dialog(tree.root, "Remove Everything You Installed?", 15)
+    pw_dialog = wait_for_dialog(tree.root, "Remove Everything I Installed?", 15)
     pw_confirm = find_button_in(pw_dialog, "Remove Everything")
     activate(pw_confirm)
-    wait_for_dialog_dismissal("Remove Everything You Installed?", 10)
+    wait_for_dialog_dismissal("Remove Everything I Installed?", 10)
 
     wait_for_condition(
         lambda: is_sensitive(powerwash_btn) and name_of(powerwash_btn) == "Remove Everything",
@@ -265,7 +265,7 @@ def main():
     emit(
         "DIALOG",
         type="factory_reset",
-        title="Factory Reset This System?",
+        title=name_of(fr_dialog),
         has_cancel=int(fr_cancel is not None),
         has_confirm=int(fr_confirm is not None),
         body_valid=int(fr_has_exp and fr_has_undone),

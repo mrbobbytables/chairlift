@@ -35,6 +35,9 @@ case "${1:-}" in
         exit 0
         ;;
     cleanup)
+        # In dry-run/test mode, pause briefly if probe release marker requested or sleep briefly
+        # to ensure busy state is observable.
+        sleep 0.8
         echo "Homebrew cache cleaned"
         exit 0
         ;;
@@ -55,6 +58,5 @@ maintenance_page:
   reset_group:
     enabled: true
 EOF
-if [ -n "${CHAIRLIFT_ATSPI_APP:-}" ] && [ -d "$(dirname "$CHAIRLIFT_ATSPI_APP")" ]; then
-    cp "$OUTDIR/config.dev.yml" "$(dirname "$CHAIRLIFT_ATSPI_APP")/config.dev.yml" 2>/dev/null || true
-fi
+# Config is loaded from cwd () where runner executes
+

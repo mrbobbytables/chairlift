@@ -357,10 +357,10 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 	if pwDialog.Fields["title"] != pwTitle {
 		t.Errorf("powerwash dialog title = %q, want %q", pwDialog.Fields["title"], pwTitle)
 	}
-	for _, expectedFragment := range []string{"Flatpak", "Distrobox", "cannot be undone"} {
-		if !strings.Contains(pwDialog.Fields["body"], expectedFragment) {
-			t.Errorf("powerwash dialog body %q missing expected fragment %q (expected: %q)", pwDialog.Fields["body"], expectedFragment, pwBody)
-		}
+	normObservedPw := strings.Join(strings.Fields(pwDialog.Fields["body"]), " ")
+	normExpectedPw := strings.Join(strings.Fields(pwBody), " ")
+	if normObservedPw != normExpectedPw {
+		t.Errorf("powerwash dialog body = %q, want %q", normObservedPw, normExpectedPw)
 	}
 
 	if !containsMaintenanceRecord(records, "DIALOG_CANCELLED", map[string]string{"type": "powerwash"}) {
@@ -379,10 +379,10 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 	if frDialog.Fields["title"] != frTitle {
 		t.Errorf("factory reset dialog title = %q, want %q", frDialog.Fields["title"], frTitle)
 	}
-	for _, expectedFragment := range []string{"--experimental", "cannot be undone", "scratch"} {
-		if !strings.Contains(frDialog.Fields["body"], expectedFragment) {
-			t.Errorf("factory reset dialog body %q missing expected fragment %q (expected: %q)", frDialog.Fields["body"], expectedFragment, frBody)
-		}
+	normObservedFr := strings.Join(strings.Fields(frDialog.Fields["body"]), " ")
+	normExpectedFr := strings.Join(strings.Fields(frBody), " ")
+	if normObservedFr != normExpectedFr {
+		t.Errorf("factory reset dialog body = %q, want %q", normObservedFr, normExpectedFr)
 	}
 
 	if !containsMaintenanceRecord(records, "DIALOG_CANCELLED", map[string]string{"type": "factory_reset"}) {
@@ -417,13 +417,15 @@ func TestMaintenanceCleanupAndRecoveryThroughATSPI(t *testing.T) {
 		t.Errorf("chairlift log missing expected factory reset dry-run line: %q", expectedFactoryResetDryRun)
 	}
 
-	// Assert neither dry-run line was logged before confirmation on Cancel
-	pwConfirmIndex := strings.Index(logText, expectedPowerwashDryRun)
-	pwCancelIndex := strings.Index(logText, "views: reset group built") // initial baseline
-	if pwConfirmIndex != -1 && pwConfirmIndex < pwCancelIndex {
-		t.Errorf("powerwash dry-run line was executed prematurely: index %d vs %d", pwConfirmIndex, pwCancelIndex)
+	// Assert each dry-run execution happened exactly once (Cancel dispatches nothing)
+	if got := strings.Count(logText, expectedPowerwashDryRun); got != 1 {
+		t.Errorf("powerwash dry-run execution count = %d, want 1 (Cancel must not execute)", got)
+	}
+	if got := strings.Count(logText, expectedFactoryResetDryRun); got != 1 {
+		t.Errorf("factory reset dry-run execution count = %d, want 1 (Cancel must not execute)", got)
 	}
 
+	pwConfirmIndex := strings.Index(logText, expectedPowerwashDryRun)
 	frConfirmIndex := strings.Index(logText, expectedFactoryResetDryRun)
 	if frConfirmIndex != -1 && pwConfirmIndex != -1 && frConfirmIndex < pwConfirmIndex {
 		t.Errorf("factory reset dry-run line occurred before powerwash: index %d vs %d", frConfirmIndex, pwConfirmIndex)

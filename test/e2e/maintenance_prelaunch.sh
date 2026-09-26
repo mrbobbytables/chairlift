@@ -59,4 +59,3 @@ maintenance_page:
     enabled: true
 EOF
 # Config is loaded from cwd () where runner executes
-

@@ -218,8 +218,12 @@ bwrap: Can't find source path /run/user/<uid>/doc/by-app/<app>: No such file or 
 
 `make e2e-atspi` (see "The behave AT-SPI suite" above). It needs podman, Go,
 and Homebrew's `xorg-server` on the host, mounts the host's Go toolchain and
-Homebrew read-only, and creates its venv from `test/e2e/requirements-atspi.txt`
-with the container's interpreter. `CHAIRLIFT_ATSPI_KNOWN_ISSUES=1` also runs
+Homebrew read-only, mounts `GOCACHE` and `GOMODCACHE` read-write, and creates
+its venv from `test/e2e/requirements-atspi.txt` with the container's interpreter.
+Because container runs modify these caches, workflows building official release
+binaries (`.github/workflows/release.yml`) must set `cache: false` on
+`actions/setup-go` in the release job so test-modified caches never reach
+production binaries. `CHAIRLIFT_ATSPI_KNOWN_ISSUES=1` also runs
 `@known_issue` scenarios.
 This fixture suite uses Xvfb; it is not a live Wayland desktop walkthrough.
 For Wayland diagnosis on ghost, read testing-lab's

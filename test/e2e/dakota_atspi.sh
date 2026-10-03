@@ -35,6 +35,10 @@ REQUIREMENTS="$ROOT/test/e2e/requirements-atspi.txt"
 GOROOT="$(go env GOROOT)"
 GOMODCACHE="$(go env GOMODCACHE)"
 GOCACHE="$(go env GOCACHE)"
+# GOCACHE and GOMODCACHE are mounted read-write so the container shares the
+# host's build and module caches. In the release workflow, the goreleaser
+# job explicitly sets cache: false on actions/setup-go so caches written
+# during E2E testing cannot be restored into the release binary build.
 mkdir -p "$GOMODCACHE" "$GOCACHE"
 TAGS="${*:-}"
 

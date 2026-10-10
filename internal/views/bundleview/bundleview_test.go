@@ -1,6 +1,7 @@
 package bundleview
 
 import (
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -337,5 +338,82 @@ func TestCollectionButtonNameCarriesTheTitle(t *testing.T) {
 		if got := InstallButtonName(label, "Team tools"); got != want {
 			t.Errorf("InstallButtonName(%q) = %q, want %q", label, got, want)
 		}
+	}
+}
+
+func TestPresentContentsBuildsRowsWithKindLabels(t *testing.T) {
+	items := []homebrew.BundleItem{
+		{Name: "jq", Kind: homebrew.BundleItemBrew},
+		{Name: "ripgrep", Kind: homebrew.BundleItemBrew},
+		{Name: "visual-studio-code", Kind: homebrew.BundleItemCask},
+		{Name: "org.gnome.TextEditor", Kind: homebrew.BundleItemFlatpak},
+		{Name: "Xcode", Kind: homebrew.BundleItemMas},
+		{Name: "golang.go", Kind: homebrew.BundleItemVSCode},
+	}
+
+	got := PresentContents(items, len(items))
+
+	if !got.HasRows() {
+		t.Fatalf("PresentContents() = %+v, want rows", got)
+	}
+	if got.EmptyTitle != "" || got.EmptySubtitle != "" {
+		t.Errorf("presentContents empty placeholders should be empty when rows exist: %+v", got)
+	}
+	if got.OverflowNotice != "" {
+		t.Errorf("OverflowNotice = %q, want empty when everything fits", got.OverflowNotice)
+	}
+	wantRows := []ContentsRow{
+		{Name: "jq", KindLabel: "Command-line tool", AccessibleName: "jq"},
+		{Name: "ripgrep", KindLabel: "Command-line tool", AccessibleName: "ripgrep"},
+		{Name: "visual-studio-code", KindLabel: "App", AccessibleName: "visual-studio-code"},
+		{Name: "org.gnome.TextEditor", KindLabel: "Flatpak", AccessibleName: "org.gnome.TextEditor"},
+		{Name: "Xcode", KindLabel: "App Store", AccessibleName: "Xcode"},
+		{Name: "golang.go", KindLabel: "VS Code extension", AccessibleName: "golang.go"},
+	}
+	if !reflect.DeepEqual(got.Rows, wantRows) {
+		t.Fatalf("PresentContents().Rows = %#v, want %#v", got.Rows, wantRows)
+	}
+}
+
+func TestPresentContentsReportsOverflowWhenCapped(t *testing.T) {
+	items := []homebrew.BundleItem{
+		{Name: "alpha", Kind: homebrew.BundleItemBrew},
+		{Name: "beta", Kind: homebrew.BundleItemBrew},
+	}
+
+	got := PresentContents(items, 5)
+
+	if !got.HasRows() {
+		t.Fatalf("PresentContents() = %+v, want rows", got)
+	}
+	if got.OverflowNotice != "Showing 2 of 5 entries." {
+		t.Errorf("OverflowNotice = %q, want %q", got.OverflowNotice, "Showing 2 of 5 entries.")
+	}
+}
+
+func TestPresentContentsReportsEmptyForUnrecognisedBrewfile(t *testing.T) {
+	got := PresentContents(nil, 0)
+	if got.HasRows() {
+		t.Fatalf("PresentContents() = %+v, want no rows", got)
+	}
+	if got.EmptyTitle != ContentsHiddenTitle {
+		t.Errorf("EmptyTitle = %q, want %q", got.EmptyTitle, ContentsHiddenTitle)
+	}
+	if got.EmptySubtitle == "" {
+		t.Errorf("EmptySubtitle = empty, want an explanation")
+	}
+}
+
+func TestPresentContentsReportsOverflowWhenItemsAreCropped(t *testing.T) {
+	// A Brewfile that the parser reached but yielded nothing of is not the
+	// same as a Brewfile that was bigger than the cap: the caller passes a
+	// total that exceeds the items it can show, so the row renders the
+	// overflow placeholder rather than the unrecognised-entries one.
+	got := PresentContents(nil, 12)
+	if got.HasRows() {
+		t.Fatalf("PresentContents() = %+v, want no rows", got)
+	}
+	if got.EmptySubtitle != ContentsHiddenSubtitle {
+		t.Errorf("EmptySubtitle = %q, want %q", got.EmptySubtitle, ContentsHiddenSubtitle)
 	}
 }

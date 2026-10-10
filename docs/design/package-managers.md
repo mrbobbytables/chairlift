@@ -157,6 +157,7 @@ resolves per call; the absent case uses the bare name only to retain
 | `BundleCheck(path)` | Two read-only checks returning `BundleStatus` |
 | `Cleanup()` | `brew cleanup`; live successful mutation output is discarded |
 | `AvailableBundles(paths)` | Filesystem discovery returning `[]Bundle` plus joined diagnostics |
+| `BundleContents(path)` | Parses a Brewfile returning `[]BundleItem` (Name + Kind) for every installable entry, deduped by (Kind, Name), capped at 256 entries per file |
 | `ListUntrustedTaps()` / `TrustPackages(tap)` | Receipt-backed discovery / per-user package trust |
 
 [`homebrew.go`](../../internal/homebrew/homebrew.go) classifies mutation argv
@@ -249,11 +250,36 @@ remain Indeterminate with an error; dry-run still performs these reads. Read-onl
 `bundle check`/`bundle list` run with `HOMEBREW_NO_AUTO_UPDATE=1`, because brew
 otherwise runs `brew update --auto-update` before every `bundle` subcommand.
 
+`BundleContents(path)` parses a Brewfile into `[]BundleItem` (one entry per
+recognised directive: `brew`, `cask`, `flatpak`, `mas`, `vscode`). Entries
+are returned in source order, deduplicated by (Kind, Name), and capped at
+256 items per file so a runaway Brewfile cannot dominate the UI.
+`countBundleItems` runs the same `parseBundleItemLine` against the same
+input and applies the same dedup, so a Brewfile's count and its expanded
+list always agree (including when one entry repeats or is malformed).
+[`bundleview.PresentContents`](../../internal/views/bundleview/bundleview.go)
+turns those items into the rows the Apps page renders inside each
+collection's `AdwExpanderRow`, with a kind label (Command-line tool, App,
+Flatpak, App Store, VS Code extension) per row. A Brewfile with no
+recognised entries shows a placeholder row instead; one longer than the
+256-entry cap lists the first 256 followed by a "Showing N of M entries."
+row. If the file cannot be read when the list is built, the rows read before
+the failure are kept with no overflow claim. Tap directives are intentionally excluded because
+they are not installable; a malformed entry (no quotes, or a quoted token
+that does not close on the same line) is skipped silently so one bad
+line cannot derail the rest of the list.
+
 `applications_page.brew_bundles_group` is independent of `brew_group`.
 Built-in `bundles_paths` contains `/usr/share/ublue-os/homebrew`,
 `/usr/share/chairlift/bundles`, and `/etc/chairlift/bundles`; shipped
 [`config.yml`](../../config.yml) replaces that list with the first directory
 only. Group visibility is floored on Homebrew before discovery.
+Each collection is rendered as an `AdwExpanderRow` whose title and subtitle
+are the curated name and description `bundleview.Describe` already produces,
+whose suffix holds the Install button and its progress bar, and whose
+expanded child rows are the package list. Expansion is opt-in per row,
+so a person scanning the page reads the closed summary first and reveals
+the contents only when they decide to inspect.
 A per-path `bundleview.InstallGate` prevents overlapping collection installs.
 Live success completes that row and refreshes installed packages; failure or
 preview restores Install, and preview requests no inventory refresh.

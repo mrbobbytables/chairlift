@@ -165,3 +165,30 @@ Feature: Apps destination
     And the "Uninstall visual-studio-code" button in the "visual-studio-code" row is sensitive
     And the "Export" button in the "Export package list" row is sensitive
     And every visible action control has an accessible name and an action
+
+  @config.apps-bundles @stub.apps-brew @stub.apps-collections
+  Scenario: Expanding an app collection row reveals its packages
+    Given ChairLift is running
+    When I open the "Apps" page
+    Then the "Team tools" row says "Tools our team relies on every day. Includes 1 app or tool."
+    When I expand the "Team tools" list under "App collections"
+    Then the "Team tools" list shows exactly
+      | title |
+      | just  |
+    And the "just" row says "Command-line tool"
+    When I expand the "Coding fonts" list under "App collections"
+    Then the "Coding fonts" list shows exactly
+      | title            |
+      | font-fira-code   |
+      | font-jetbrains-mono |
+      | font-hack        |
+
+  @config.apps-bundles @stub.apps-brew @stub.apps-collections
+  Scenario: A collection row still installs without expanding its list
+    Given ChairLift is running
+    When I open the "Apps" page
+    And I click the "Install Coding fonts" button in the "Coding fonts" row
+    Then the application log contains "/bundles/fonts-dev.Brewfile"
+    And the "Install Coding fonts" button in the "Coding fonts" row is sensitive
+    And I do not see "Installing collection"
+    And the application log does not contain "panic"

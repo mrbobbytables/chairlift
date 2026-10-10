@@ -308,3 +308,118 @@ func (g *InstallGate) InstallPhase() (label string, sensitive bool) {
 		return InstallLabelReady, true
 	}
 }
+
+// ContentsHiddenTitle is what the list rows call themselves when nothing
+// is left to show: it appears once a parse produced no recognised entries,
+// so the user knows the row is not a glitch and that the Install button is
+// still safe to press.
+const ContentsHiddenTitle = "No entries could be read for this collection."
+
+// ContentsHiddenSubtitle names the limit that hid them: a Brewfile too
+// large for one read. Keeping the message concrete avoids the "could not
+// load" tone that would otherwise admit a real failure has happened.
+const ContentsHiddenSubtitle = "The Brewfile is larger than the display limit."
+
+// ContentsRowName is the accessible name of an entry inside the expanded
+// list. The bare formula or cask token is enough for a screen reader to
+// distinguish one item from the next, so the affordance stays predictable
+// without inventing a description a person may not recognize.
+func ContentsRowName(name string) string {
+	return name
+}
+
+// PresentContents derives the package-list presentation one collection row
+// renders when a person opens it. The items come in the order the Brewfile
+// named them, deduplicated by the homebrew layer. Truncation is reported
+// separately from emptiness, because a real Brewfile that exceeds the
+// display cap and a Brewfile that holds no installable entries must look
+// different: one hides details behind a count, the other says so outright.
+//
+// items is the slice the homebrew layer actually returned. total is the
+// raw entry count the same layer reported; it can be larger than
+// len(items) when the parser hit its own cap and stopped reading. When the
+// parser produced nothing at all (an empty or unrecognised file), total
+// will be 0 too — that case is the "no recognised entries" placeholder
+// rather than the "Brewfile is larger" one.
+func PresentContents(items []homebrew.BundleItem, total int) ContentsPresentation {
+	if len(items) == 0 {
+		if total > 0 {
+			return ContentsPresentation{
+				EmptyTitle:    ContentsHiddenTitle,
+				EmptySubtitle: ContentsHiddenSubtitle,
+			}
+		}
+		return ContentsPresentation{
+			EmptyTitle:    ContentsHiddenTitle,
+			EmptySubtitle: "This collection's Brewfile has no recognised entries.",
+		}
+	}
+
+	rows := make([]ContentsRow, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, ContentsRow{
+			Name:           item.Name,
+			KindLabel:      ContentsKindLabel(item.Kind),
+			AccessibleName: ContentsRowName(item.Name),
+		})
+	}
+
+	var overflow string
+	if total > len(items) {
+		overflow = fmt.Sprintf("Showing %d of %d entries.", len(items), total)
+	}
+
+	return ContentsPresentation{
+		Rows:           rows,
+		OverflowNotice: overflow,
+	}
+}
+
+// ContentsKindLabel names the kind of one entry as a person would read it:
+// formulae are "Command-line tool", casks are "App", the rest keep their
+// on-disk identifiers so an "App Store" item does not read like a "Flatpak".
+// The labels are stable across collections so a screen reader user can
+// tell the shape of an entry from its kind text alone.
+func ContentsKindLabel(kind homebrew.BundleItemKind) string {
+	switch kind {
+	case homebrew.BundleItemBrew:
+		return "Command-line tool"
+	case homebrew.BundleItemCask:
+		return "App"
+	case homebrew.BundleItemFlatpak:
+		return "Flatpak"
+	case homebrew.BundleItemMas:
+		return "App Store"
+	case homebrew.BundleItemVSCode:
+		return "VS Code extension"
+	default:
+		return ""
+	}
+}
+
+// ContentsPresentation is the immutable view of one collection's expanded
+// list. It holds the rows to render and, when a row was cropped, the note
+// that explains why; the empty placeholders are non-empty only when the
+// underlying Brewfile had nothing to show.
+type ContentsPresentation struct {
+	Rows           []ContentsRow
+	OverflowNotice string
+	EmptyTitle     string
+	EmptySubtitle  string
+}
+
+// HasRows reports whether there is at least one entry to render. Views
+// use it to decide between the row list and the empty placeholder.
+func (p ContentsPresentation) HasRows() bool {
+	return len(p.Rows) > 0
+}
+
+// ContentsRow is one entry in the expanded package list. Name is the
+// on-disk identifier a person sees, KindLabel is the human-readable kind
+// used as the row's subtitle, and AccessibleName is the name a screen
+// reader announces when this row is focused.
+type ContentsRow struct {
+	Name           string
+	KindLabel      string
+	AccessibleName string
+}

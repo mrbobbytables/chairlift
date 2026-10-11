@@ -940,7 +940,7 @@ Goose its provider through the environment. `hints.md` becomes the profile's
 `.goosehints`. Knowledge searches go online, so no copy claims a session's
 questions stay on this computer. The hint explicitly names the `linux-tools`
 tools (`get_system_information`, `get_disk_usage`, `get_cpu_information`,
-…) so a small local model — the default Qwen3-8B preset — reaches for them
+…) so a small local model — the recommended Qwen family — reaches for them
 instead of answering from training data (issue #523); it also forbids
 inventing system facts the tools would have returned.
 
@@ -959,8 +959,9 @@ boundary.
 `internal/aistack` is Agent Mode's runtime owner; [ADR-0015](../adr/0015-agent-mode-llmman.md)
 is the contract. [llmman](https://github.com/llmmanorg/llmman) chooses the
 engine and backend for the hardware (container runtime, prebuilt binary, or a
-`llama-server` on `$PATH`) and owns the model store. ChairLift presents active
-model selection and recommended presets without a GPU-vendor stack matrix.
+`llama-server` on `$PATH`) and owns the model store. ChairLift reads the
+selected model alias back through llmman and links to its models page for
+selection, so no GPU-vendor stack matrix lives here.
 Enabling:
 
 1. Renders `Brewfile(haveLLMMan)`, with `tap "llmmanorg/tap"` and
@@ -996,10 +997,11 @@ plus a JSON answer from `/llmman/node`), degraded (unit, no answer), and
 disabled (llmman installed, no unit). On page build the non-blocking facts
 render immediately and the health probe runs off the main thread.
 
-Model selection saves the canonical `hf.co/...` target as `bluefin-active`,
-restarts the owned user unit, and waits for `/llmman/node` readiness before
-confirming the selection. llmman reads aliases at startup, so configuration
-alone is not a serving-model guarantee. A missing alias renders no selection.
+Model selection happens in llmman's own models page
+(`http://127.0.0.1:17434/#/models`), opened from the Manage Models row.
+ChairLift only reads `bluefin-active` back (`ReadActiveModel`); it never
+writes the alias or restarts the unit for a model change. A missing alias
+renders no selection.
 The owned unit also sets empty `LLMMAN_PEERS=` to override existing aggregation
 configuration. Removing the remote-machine controls therefore cannot leave
 hidden offload enabled; unrelated llmman configuration is not rewritten.
@@ -1571,14 +1573,17 @@ After every flip the switch is re-set from a fresh `devmenu.AskBluefinState` rea
 ## Explicit setup flow
 
 Setup never opens automatically. `--setup`, its `--first-run` alias, and the
-menu action start `internal/firstrun.Pages` over the existing visible navigation
-inventory in Features → Apps → Agents → Livery order. The window hides its
-sidebar and shows one footer with Back, Next, Finish, and Dismiss. Each step
-uses the actual page controls and their existing gates; navigation goes through
-`Window.navigateToPage`. There is no separate assistant dialog or settings
-adapter. Missing pages are skipped; an empty inventory opens no flow.
+menu action open Welcome, then `internal/firstrun.Pages` selects the existing
+visible Features → Apps → Agents → Livery pages, followed by a conclusion.
+Both bookends share one layout and the embedded theme-aware Bluefin wordmark.
+Welcome has normal introductory text and the website's Zavala quote; the
+conclusion has the website's Edith Wharton quote. Selection steps use their
+existing widgets and `Window.navigateToPage`; bookends use the setup stack.
+Missing pages are skipped; an empty inventory opens no flow.
 
-Back and Next mutate no settings. Finish records completion and version;
-intentional dismissal records a skip without demoting prior completion. Dry-run
-logs disposition writes instead of persisting them. The `0-setup.png` capture
-shows the Features start of this explicit flow, not a welcome screen.
+Back and Next mutate no settings. **Launch Bazaar App Store** saves completed
+and version, runs `gtk-launch io.github.kolunmi.Bazaar` off the GTK thread, and
+quits only after success. A failed save or launch leaves the conclusion
+retryable with an error toast. Intentional dismissal records a skip without
+demoting prior completion. Dry-run previews persistence and suppresses Bazaar
+but still exits on the final action. `0-setup.png` captures Welcome.

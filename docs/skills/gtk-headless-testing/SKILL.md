@@ -247,11 +247,12 @@ work there. Screenshots are one PipeWire frame from Mutter's ScreenCast API.
   (#508, every Apps collection Install button).
 - **An `AdwActionRow` activatable widget is named by the row title.**
   `SetActivatableWidget` adds a `LABELLED_BY` relation to the title, so a
-  button labelled "Open llmman" in a "Models and Chat" row announces itself
-  as "Models and Chat" — a name without its visible label (WCAG 2.5.3).
-  Call `ResetRelation(gtk.AccessibleRelationLabelledByValue)` after
-  `SetActivatableWidget` unless the button's label is the row title, and
-  have the scenario click the button by its visible label.
+  "Choose…" button in an "Avatar" row (whose title describes the current
+  picture, e.g. "No picture set") announces itself as "No picture set" — a
+  name without its visible label (WCAG 2.5.3). Call
+  `ResetRelation(gtk.AccessibleRelationLabelledByValue)` after
+  `SetActivatableWidget`, and have the scenario click the button by its
+  visible label.
 
 **Learned from:** #366/#375 (turning the probe on in CI) and #357's Wave 0,
 which replaced the one-probe-per-feature TSV harness — every community PR
@@ -365,3 +366,12 @@ the suite remains in `--dry-run`. Its masked `/proc/cmdline` ensures the
 fake `bootc` is used rather than reading the host's composefs deployment.
 Verify the staged state and the return to a visible pending-update panel;
 an unstaged screenshot or a string-search test cannot prove either layout.
+
+## Launch-and-exit setup actions
+
+For a final action that launches another app and exits, assert process exit and
+its normal-exit log before inspecting saved previews; the accessibility tree is
+gone. Prove unprivileged launch suppression with a recording `gtk-launch` stub
+and an empty calls file: a preview log and the privileged action journal alone
+cannot prove that no desktop app launched. Keep the native quit action disabled
+across save/launch, not only `close-request`, so Ctrl+Q cannot interrupt it.

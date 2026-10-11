@@ -407,7 +407,7 @@ An agent must not break these:
   regenerating and diffing per push would churn the repository for no signal.
   Adding a page or a user-facing feature means running `make screenshots` and
   extending `docs/walkthrough.md` in the same change. One capture is not a
-  page: `0-setup.png`, the explicit setup flow's Features start, which the
+  page: `0-setup.png`, the explicit setup flow's Welcome start, which the
   runner takes first by launching with `--dry-run --setup` and dismisses
   with Escape before the page walk; the orphan check counts it beside the
   pages, and the walkthrough opens with it.
@@ -578,18 +578,19 @@ An agent must not break these:
   never reads onboarding disposition or starts a wizard. `--first-run`,
   `--setup`/`-s`, and the setup menu action share `PresentFirstRun`.
   `internal/firstrun.Pages` filters the existing visible navigation inventory
-  into Features, Apps, Agents, Livery order; no welcome or update-preferences
-  step is added. The window hides its sidebar during the flow and builds
-  Back/Next/Finish/Dismiss controls once. Every step navigates through
-  `Window.navigateToPage` and uses the page's existing widgets, gates, and
-  operations; there is no dialog copy or `SetupHost` bridge. Each step then
-  calls `UserHome.ScrollPageToTop`, because a page keeps its scroll position
-  and a step entered mid-page hid its own heading.
-  Next and Back perform no configuration mutation. Repeated explicit
-  requests preserve the current step; an empty eligible inventory opens no
-  flow. Finish records completed plus version, intentional dismissal records
-  skip without demoting completed, and a crash records nothing. Disposition
-  writes remain off the GTK main thread and are previews under `--dry-run`.
+  into Features, Apps, Agents, Livery order between matching Welcome and
+  conclusion screens. The window hides its sidebar during the flow and builds
+  Back/Next/final-action/Dismiss controls once. Selection steps navigate through
+  `Window.navigateToPage` and use existing widgets, gates, and operations;
+  each selection step then calls `UserHome.ScrollPageToTop`, because a page
+  keeps its scroll position and a step entered mid-page hid its own heading;
+  bookends use the setup stack, not sidebar routes. Next and Back mutate no
+  configuration. Repeated requests preserve progress; an empty inventory opens
+  no flow. **Launch Bazaar App Store** records completion and version, launches
+  Bazaar through its desktop entry off the GTK thread, then quits the app.
+  Save or launch failures leave a retryable conclusion. Dismiss records skip
+  without demoting completed; a crash records nothing. Dry-run previews writes
+  and suppresses Bazaar, but still exercises the final application exit.
   `test/e2e/features/setup.feature` covers both explicit flags, normal launch,
   navigation, and dismissal; `firstrun.Keys` remain held to the shipped schema.
 - **The Homebrew executable has one resolution.** `internal/homebrew.ExecutablePath`
@@ -894,11 +895,13 @@ An agent must not break these:
   route for reads: a prompt on every launch is the failure this removes, and
   staging keeps its existing fixed `bootc-update-stage` path.
 - **Agent Mode is local, unprivileged, and reports observed readiness.**
-  `agents_page` has one Agent Mode switch, visible model and preset controls,
-  a "Models and Chat" row that opens llmman's own web UI
-  (`aistack.WebUIURL`) while Agent Mode is ready, and the local API address;
-  the Troubleshooting group below it is the invariant above. Unready model and
-  launch controls stay visible and insensitive instead of disappearing.
+  `agents_page` has one Agent Mode switch, a visible Active Model row that
+  reads the `bluefin-active` alias back from llmman, and a "Manage Models"
+  row that opens llmman's own models page (`aistack.WebUIURL`) while Agent
+  Mode is ready, plus the local API address; the Troubleshooting group below
+  it is the invariant above. Unready model and launch controls stay visible
+  and insensitive instead of disappearing. Model selection itself happens in
+  llmman's own UI (#568).
   Peer/offload controls and their backend are removed; this surface manages
   this computer only.
   `internal/aistack` owns three artifacts: the generated installation Brewfile,
@@ -917,12 +920,14 @@ An agent must not break these:
   override any legacy aggregation settings. Wildcard CORS is forbidden.
   Enable fetches the engine before writing the unit and readiness requires a
   bounded successful JSON-object response from `/llmman/node`, never unit
-  presence or `systemctl is-active` alone. Toggle and preset mutations share
+  presence or `systemctl is-active` alone. Toggle and readiness reads share
   one action gate; generation checks reject stale readiness and alias reads.
-  Selecting a model saves its canonical `hf.co/...` alias target, restarts the
-  owned user unit because llmman reads aliases only at startup, and waits for
-  readiness before confirming selection. A missing alias means no selected
-  model, not an error or an invented default.
+  Model selection happens in llmman's own UI, which ChairLift only links to
+  via the Manage Models row at `http://127.0.0.1:17434/#/models` (#568).
+  ChairLift reads the `bluefin-active` alias back via `llmman config get`,
+  never writes it, so the Agents page is a viewer of the user's llmman
+  configuration rather than a second writer to it. A missing alias means no
+  selected model, not an error or an invented default.
   Startup reconciles only an existing owned unit against `RenderUnit` plus the
   exact live systemd `InvocationID`, committed as a unit comment only after
   successful reload/restart. An already-written file is not proof the daemon

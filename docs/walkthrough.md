@@ -17,12 +17,14 @@ schedule choosers, no feature grids.
 ![Setup Assistant](screenshots/0-setup.png)
 
 Setup Assistant never opens automatically. Choose **Setup Assistant…** from
-the menu, `chairlift --setup`, or its `--first-run` alias to walk the existing
-**Features**, **Apps**, **Agents**, and **Livery** pages in that order. The
-first screenshot shows Features, not a welcome dialog. Pages unavailable on
-this computer are skipped. The ordinary page controls perform every action;
-**Back** and **Next** only navigate. **Finish** remembers completion, and
-**Dismiss setup** (or Escape) remembers a skip without undoing a previous completion.
+the menu, `chairlift --setup`, or its `--first-run` alias to open Welcome, then
+walk **Features**, **Apps**, **Agents**, and **Livery**. Welcome presents the
+Bluefin wordmark, introduction and Zavala quote. Unavailable pages are skipped;
+the ordinary page controls perform every action. **Back** and **Next** only
+navigate. The matching conclusion quotes Edith Wharton. **Launch Bazaar App
+Store** saves completion, opens Bazaar, and closes Control Center. A save or
+launch failure leaves the conclusion available to retry. **Dismiss setup**
+(or Escape) records a skip without undoing previous completion.
 
 ---
 
@@ -133,11 +135,10 @@ only. Turning it off stops the server and keeps the software and any models you
 downloaded. The row shows an activity spinner throughout setup and shutdown, then
 restores the switch if the operation fails.
 
-**Active Model** and **Recommended Presets** remain visible, becoming usable
-only when the local server is ready. **Choose…** lists the model families with
-the recommended one first and highlighted; **Models and Chat**'s **Open llmman** opens llmman's
-own web interface for pulling, removing, and trying models. The connection
-address is directly selectable, not hidden in Details.
+**Active Model** remains visible, becoming usable only when the local server
+is ready; **Manage Models** opens llmman's own models page so users pull,
+remove, and try models there rather than through ChairLift's picker. The
+connection address is directly selectable, not hidden in Details.
 
 **Troubleshooting** sits below Agent Mode where Homebrew is installed. Its
 **Goose** row is the Agent Mode desktop GUI with read-only tools for this

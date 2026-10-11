@@ -673,8 +673,13 @@ surface is not permission to make the fixed provider helpers configurable.
 [`internal/devtools`](../../internal/devtools/devtools.go) owns WSL backends
 and Docker CLI setup under `features_page.dx_group`. The developer-access switch
 does not install editors or switch to a different OS image (editors and IDEs
-are installed via Bazaar or the Apps page). Enabling Developer Mode
-automatically installs the Dev Container CLI (`devcontainer`).
+are installed via Bazaar or the Apps page). A confirmed Developer Mode enable
+installs the Dev Container CLI (`devcontainer`) when Homebrew is available.
+`startDeveloperDevcontainerSetup` runs off the GTK thread behind its own action
+gate, so repeated enables do not overlap installs. Failure reports only the
+install failure and preserves developer access. Preview reaches Homebrew's
+existing dry-run boundary and leaves the Apps inventory unchanged; only live
+success refreshes it.
 
 `dx_group.wsl_backend` defaults to **nsl**, with **Lima** as an administrator
 option and an in-session backend chooser. The first observation retains an

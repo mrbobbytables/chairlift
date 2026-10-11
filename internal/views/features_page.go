@@ -665,7 +665,7 @@ func (uh *UserHome) startDeveloperFeedSetup(enabled, succeeded bool) {
 }
 
 // startDeveloperDevcontainerSetup automatically installs the Dev Container CLI
-// (devcontainer) when Developer Mode is first enabled. Like
+// (devcontainer) after a confirmed Developer Mode enable. Like
 // startDeveloperFeedSetup, it is called from the one branch of
 // onDeveloperToggled that reached a successful promotion, so a page restore,
 // a failed helper call, and a disable spawn nothing. A dry-run enable reaches
@@ -694,7 +694,9 @@ func (uh *UserHome) startDeveloperDevcontainerSetup(enabled, succeeded bool) {
 				return
 			}
 
-			uh.homebrewInventoryChanged()
+			if !dryrun.Enabled() {
+				uh.homebrewInventoryChanged()
+			}
 		})
 	}()
 }

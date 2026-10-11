@@ -10,6 +10,8 @@ Feature: Features page — Developer Mode, WSL Mode, Docker, selective Gaming, a
     Given ChairLift is running
     When I open the "Features" page
     Then the Developer Mode switch shows this account's developer-group membership
+    And I do not see "IDEs and terminal editors"
+    And the application log does not contain "brew install devcontainer"
     And each gaming component says "Installed system-wide"
     And no gaming component is selected
     And the action journal is empty

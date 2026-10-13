@@ -378,6 +378,19 @@ An agent must not break these:
   composefs `bootc switch` refuses a target that is the rollback deployment
   (unpin's usual case); `internal/installcheck`'s
   `TestHelperImageSwitchesGoThroughSwitchImage` holds that wiring.
+  **The decisions the helper makes after a command runs live in
+  `internal/ubluehelper`, not in `main.go`.** `ubluehelper.SwitchImage`
+  owns the refusal → `bootc status` → `bootc rollback` fallback and its four
+  outcomes (switched, recovered via rollback, rollback failed, plain
+  failure), and `ubluehelper.ApplyDevGroups` owns the per-group
+  skip-and-continue and the none-applied refusal, both behind injected
+  `Runner`/`RollbackRefLookup`/`GroupEnsurer` seams. `main.go`'s
+  `switchImage` and `runDevGroups` keep their names for the AST gates and
+  only wire the real `runCapture`, `bootc.GetStatus`, and
+  `ensureLocalGroup` in, then print or exit. The AST gates check wiring, not
+  behavior — inverting the rollback-target comparison passed every one of
+  them — so `internal/ubluehelper/execute_test.go` holds the outcomes
+  directly; a new post-execution decision belongs there, not in `cmd/`.
   `internal/ubluehelper`'s tests assert the argv validation
   per command, and the e2e boundary test asserts the installed binary
   rejects each shape. `cmd/chairlift-helper`'s dispatch carries a

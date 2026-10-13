@@ -17,7 +17,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -108,27 +107,27 @@ func runChannelSwitch(ctx context.Context, invocation ubluehelper.Invocation) {
 	switchImage(ctx, args, "bootc switch failed")
 }
 
-// switchImage runs a derived `bootc switch` argv. Switching back to the image
-// the host just left is a switch to the rollback deployment, which a composefs
-// `bootc switch` refuses ("Target image has the same fs-verity digest as the
-// existing Some(Rollback) deployment"); making that deployment the next boot
-// with the fixed rollback argv is the switch the person asked for.
+// switchImage runs a derived `bootc switch` argv through
+// ubluehelper.SwitchImage, which owns the fallback to the fixed
+// `bootc rollback` when a composefs `bootc switch` refuses a target that is
+// the rollback deployment. This wrapper only supplies the real runner and
+// `bootc status` and prints or exits on the result.
 func switchImage(ctx context.Context, args []string, failure string) {
-	target := args[len(args)-1]
-	var captured bytes.Buffer
-	if err := runCapture(ctx, &captured, "bootc", args...); err != nil {
-		if ubluehelper.IsSameRollbackRefusal(captured.String()) {
-			if status, statusErr := bootc.GetStatus(ctx); statusErr == nil && status.Status.Rollback.ImageRef() == target {
-				if rerr := run(ctx, "bootc", ubluehelper.RollbackArgs()...); rerr != nil {
-					fatal(fmt.Sprintf("%s: %v; rollback to %s failed: %v", failure, err, target, rerr))
-				}
-				fmt.Printf("switched to %s (the previous deployment) — restart to apply\n", target)
-				return
-			}
-		}
-		fatal(fmt.Sprintf("%s: %v", failure, err))
+	line, err := ubluehelper.SwitchImage(ctx, runCapture, rollbackImageRef, args, failure)
+	if err != nil {
+		fatal(err.Error())
 	}
-	fmt.Printf("switched to %s — restart to apply\n", target)
+	fmt.Println(line)
+}
+
+// rollbackImageRef reads the rollback deployment's image reference from
+// `bootc status`.
+func rollbackImageRef(ctx context.Context) (string, error) {
+	status, err := bootc.GetStatus(ctx)
+	if err != nil {
+		return "", err
+	}
+	return status.Status.Rollback.ImageRef(), nil
 }
 
 // runDriverSwitch moves the host to a different graphics-driver image on the
@@ -177,9 +176,9 @@ func runPin(ctx context.Context, invocation ubluehelper.Invocation) {
 }
 
 // runDevGroups adds or removes the invoking user across every developer
-// group. A group that does not exist on this image is skipped rather than
-// failing the whole operation: the group set is shared across Bluefin,
-// Bluefin LTS, and Dakota, which do not all ship the same ones.
+// group through ubluehelper.ApplyDevGroups, which owns the skip-and-continue
+// and none-applied decisions. This wrapper resolves the user from PKEXEC_UID,
+// supplies the real runner and group-file copier, and prints or exits.
 func runDevGroups(ctx context.Context, invocation ubluehelper.Invocation) {
 	uid, err := ubluehelper.TargetUID(os.Getenv("PKEXEC_UID"))
 	if err != nil {
@@ -191,40 +190,12 @@ func runDevGroups(ctx context.Context, invocation ubluehelper.Invocation) {
 		fatal(fmt.Sprintf("resolving uid %d: %v", uid, err))
 	}
 
-	applied := 0
-	for _, group := range ubluehelper.DevGroups() {
-		name, args, ok := ubluehelper.GroupArgs(invocation.Command, account.Username, group)
-		if !ok {
-			fatal(fmt.Sprintf("unsupported group operation for command %q", invocation.Command))
-		}
-
-		if invocation.Command == ubluehelper.CommandDXEnable {
-			if err := ensureLocalGroup(group, invocation.DryRun); err != nil {
-				fmt.Fprintln(os.Stderr, ubluehelper.SkippedGroupLine(group, err))
-				continue
-			}
-		}
-
-		if invocation.DryRun {
-			fmt.Printf("[DRY-RUN] would execute: %s %v\n", name, args)
-			applied++
-			continue
-		}
-
-		if err := run(ctx, name, args...); err != nil {
-			// usermod/gpasswd fail on a group this image does not define;
-			// report it and carry on with the rest.
-			fmt.Fprintln(os.Stderr, ubluehelper.SkippedGroupLine(group, err))
-			continue
-		}
-		applied++
+	applied, err := ubluehelper.ApplyDevGroups(ctx, runCapture, ensureLocalGroup,
+		invocation.Command, account.Username, invocation.DryRun, os.Stdout, os.Stderr)
+	if err != nil {
+		fatal(err.Error())
 	}
-
-	if applied == 0 {
-		fatal("no developer groups could be changed")
-	}
-	fmt.Printf("%s applied to %d group(s) for %s — log out and back in to take effect\n",
-		invocation.Command, applied, account.Username)
+	fmt.Println(ubluehelper.DevGroupsAppliedLine(invocation.Command, applied, account.Username))
 }
 
 // runRestart restarts the machine. It is the last thing this process does on
